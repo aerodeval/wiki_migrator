@@ -53,3 +53,8 @@ jspm_packages/
 
 # Aider AI Chat
 .aider*
+
+# Frontend build output
+wiki_migrator/public/frontend
+wiki_migrator/www/wiki-migrator.html
+wiki_migrator/public/node_modules

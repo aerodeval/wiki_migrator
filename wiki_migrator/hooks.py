@@ -9,6 +9,11 @@ app_license = "agpl-3.0"
 # bodies instead of form-encoded, per-key JSON-stringified values.
 use_json_request_body = True
 
+# The SPA (frontend/) owns every path under /wiki-migrator.
+website_route_rules = [
+	{"from_route": "/wiki-migrator/<path:app_path>", "to_route": "wiki-migrator"},
+]
+
 # Apps
 # ------------------
 
@@ -192,23 +197,12 @@ use_json_request_body = True
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"wiki_migrator.tasks.all"
-# 	],
-# 	"daily": [
-# 		"wiki_migrator.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"wiki_migrator.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"wiki_migrator.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"wiki_migrator.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	# sync_migrations syncs only those not synced for an hour, so one refused goes 10 minutes later
+	"cron": {
+		"*/10 * * * *": ["wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_migration.sync_migrations"]
+	},
+}
 
 # Testing
 # -------
@@ -303,4 +297,3 @@ require_type_annotated_api_methods = True
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
