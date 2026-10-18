@@ -259,18 +259,20 @@ class WikiMigration(Document):
 			# what the page makes on the helpdesk, deleted again if it fails
 			created = frappe._dict(article=None, files=[])
 			try:
-				d.status, d.message = self.import_page(
+				d.status, d.message, d.article, d.category = self.import_page(
 					wiki, helpdesk, d, targets[d.target], imported, created
 				)
-			except JobTimeoutException:
-				self.undo_page(helpdesk, d, created)
-				# the run stops here, so the item forgets its undone article now
-				frappe.db.set_value("Wiki Migration Item", d.name, "article", d.article)
-				frappe.db.commit()
-				raise
 			except Exception as e:
-				message = get_error_message(e, d.wiki_route)
-				d.status, d.message = "Failed", message + self.undo_page(helpdesk, d, created)
+				undo_error = self.undo_page(helpdesk, created)
+				# an article it couldn't remove stays on the item, so a retry finishes it
+				d.article, d.category = created.article if undo_error else None, None
+				if isinstance(e, JobTimeoutException):
+					# the run stops here, so the item's article is saved now
+					frappe.db.set_value("Wiki Migration Item", d.name, "article", d.article)
+					frappe.db.commit()
+					raise
+				d.status = "Failed"
+				d.message = "\n".join(filter(None, [get_error_message(e, d.wiki_route), undo_error]))
 			d.category_name, d.parent_category_name = get_category_names(categories, d.category)
 			frappe.clear_messages()
 			frappe.db.set_value(
@@ -299,37 +301,36 @@ class WikiMigration(Document):
 		imported: dict,
 		created: frappe._dict,
 	) -> tuple:
-		"""Copy one wiki page into an article; the item's new status and message."""
-		d.article = d.category = None
+		"""Copy one wiki page into an article; the item's new status, message, article and
+		category. `created` holds the article the page makes or takes over, and its files."""
 		existing = imported.get(d.wiki_route)
 		finished = bool(existing) and existing.finished
 		if finished and self.on_existing == "Skip":
-			d.article, d.category = existing.article, existing.category
-			return "Skipped", None
+			return "Skipped", None, existing.article, existing.category
+		if existing and not finished:
+			# a stopped run made it but never finished it: this page takes it over
+			created.article = existing.article
 		page = WikiPage(wiki.get_page_html(d.wiki_route), wiki.base_url, d.wiki_route)
 		if page.is_empty:
-			return "Skipped", _("The page is empty in the wiki")
+			return "Skipped", _("The page is empty in the wiki"), None, None
 		title = d.title[:NAME_LENGTH]
 		if finished:
-			article, category = existing.article, existing.category
-		elif existing:
-			# a stopped run made it but never finished it: this page takes it over
-			article = created.article = d.article = existing.article
-		else:
+			category = existing.category
+		elif not created.article:
 			# a draft without a category until it's complete: the helpdesk refuses to
 			# delete a category's last article, which undoing a failed page would be
-			article = helpdesk.insert(ARTICLE, {"title": title, "status": "Draft"})
-			created.article = d.article = article
+			created.article = helpdesk.insert(ARTICLE, {"title": title, "status": "Draft"})
 			# recorded at once, so a run stopped before the page is done finds it again
-			frappe.db.set_value("Wiki Migration Item", d.name, "article", article)
+			frappe.db.set_value("Wiki Migration Item", d.name, "article", created.article)
 			frappe.db.commit()
+		article = existing.article if finished else created.article
 		warnings = self.copy_assets(wiki, helpdesk, page, article, bool(existing), created.files)
 		values = {"title": title, "content": page.html}
 		if not finished:
 			values.update(category=category, status=self.article_status, visibility=self.visibility)
 		helpdesk.update(ARTICLE, article, values)
-		d.article, d.category = article, category
-		return ("Updated" if finished else "Imported"), "\n".join(warnings) or None
+		status = "Updated" if finished else "Imported"
+		return status, "\n".join(warnings) or None, article, category
 
 	def copy_assets(
 		self,
@@ -363,19 +364,16 @@ class WikiMigration(Document):
 		file_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
 		return helpdesk.upload_file(article, file_name, content)
 
-	def undo_page(self, helpdesk: HelpdeskClient, d, created: frappe._dict) -> str:
-		"""The helpdesk can't roll back, so what a failed page made there is deleted and
-		the item forgets it. A note for the item's message when even that fails; the item
-		then keeps its article, so a retry finishes that one instead of making another."""
+	def undo_page(self, helpdesk: HelpdeskClient, created: frappe._dict) -> str | None:
+		"""The helpdesk can't roll back, so what a failed page made there is deleted.
+		None when everything went, else why it couldn't."""
 		try:
 			for file in created.files:
 				helpdesk.delete("File", file)
 			if created.article:
 				helpdesk.delete(ARTICLE, created.article)
 		except frappe.ValidationError as e:
-			return "\n" + _("Couldn't remove what it made on the helpdesk: {0}").format(e)
-		d.article = d.category = None
-		return ""
+			return _("Couldn't remove what it made on the helpdesk: {0}").format(e)
 
 	def link_imported_articles(self, helpdesk: HelpdeskClient, categories: dict[str, dict]):
 		"""Point links between pages of the wiki at their articles, now that they all exist."""
