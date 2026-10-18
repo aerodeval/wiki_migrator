@@ -17,6 +17,7 @@ from wiki_migrator.api import (
 	start_import,
 )
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_migration import (
+	WikiMigration,
 	run_migration,
 )
 
@@ -581,6 +582,25 @@ class TestMigrationJob(MigrationCase):
 		self.assertEqual(result["status"], "Completed")
 		broken = self.items(result)["handbook/broken"]
 		self.assertEqual((broken.status, broken.category_name), ("Imported", "Doomed"))
+
+	def test_run_failing_after_its_pages_can_be_retried(self):
+		name = self.connect()["name"]
+		pages = self.pages()[:4]
+		with patch.object(
+			WikiMigration, "link_imported_articles", side_effect=frappe.ValidationError("Links broke")
+		):
+			result = self.migrate(name, pages, self.targets)
+		self.assertEqual((result["status"], result["counts"]["imported"]), ("Failed", 4))
+		self.assertTrue(result["can_retry"])
+
+		self.assertEqual(retry_failed(name)["status"], "Queued")
+		run_migration(name)
+		result = get_import(name)
+
+		self.assertEqual(result["status"], "Completed")
+		self.assertFalse(result["can_retry"])
+		release = self.helpdesk.articles(title="Release")[0]
+		self.assertIn('href="/helpdesk/kb-public/articles/', release["content"])
 
 	def test_unreachable_wiki_fails_the_whole_run(self):
 		name = self.connect()["name"]

@@ -2,7 +2,7 @@
   <div class="flex min-h-screen flex-col">
     <AppHeader :items="breadcrumbs">
       <Button
-        v-if="canRetry"
+        v-if="wikiImport?.can_retry"
         :label="__('Retry failed')"
         iconLeft="lucide-rotate-ccw"
         :loading="retry.loading"
@@ -148,6 +148,7 @@ interface WikiImport {
   status: string;
   error: string | null;
   stale?: boolean;
+  can_retry: boolean;
   counts: Record<
     "total" | "imported" | "updated" | "skipped" | "failed" | "pending",
     number
@@ -203,11 +204,6 @@ const items = computed(() =>
     (a, b) => Number(b.status === "Failed") - Number(a.status === "Failed")
   )
 );
-
-const canRetry = computed(() => {
-  const counts = wikiImport.value?.counts;
-  return !isRunning.value && !!counts && counts.failed + counts.pending > 0;
-});
 
 const retry = createResource({
   url: "wiki_migrator.api.retry_failed",

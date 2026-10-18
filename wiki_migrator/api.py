@@ -142,6 +142,7 @@ def get_import(name: str) -> dict:
 		**{field: migration.get(field) for field in MIGRATION_FIELDS},
 		"supports_subcategories": bool(migration.supports_subcategories),
 		"stale": migration.is_stale,
+		"can_retry": migration.can_retry,
 		"counts": _get_counts([d.status for d in migration.items]),
 		"items": items,
 	}

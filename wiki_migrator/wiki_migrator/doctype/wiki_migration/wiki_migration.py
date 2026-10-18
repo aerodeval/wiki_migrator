@@ -27,6 +27,7 @@ GENERAL = "General"
 NAME_LENGTH = 140
 JOB_TIMEOUT = 4 * 60 * 60
 ACTIVE_STATUSES = ("Queued", "Running")
+RETRY_STATUSES = ("Failed", "Pending")
 
 
 class WikiMigration(Document):
@@ -51,6 +52,16 @@ class WikiMigration(Document):
 	def is_stale(self) -> bool:
 		"""Queued or running on paper, but the worker that had the job is gone."""
 		return self.status in ACTIVE_STATUSES and not is_job_enqueued(self.job_id)
+
+	@property
+	def can_retry(self) -> bool:
+		"""Pages left to import, or a run that stopped after them: in its link or
+		cleanup step, or with its worker. A rerun skips the pages already done."""
+		if self.status in ACTIVE_STATUSES and not self.is_stale:
+			return False
+		return self.status in ("Failed", *ACTIVE_STATUSES) or any(
+			d.status in RETRY_STATUSES for d in self.items
+		)
 
 	def start(self, plan: dict):
 		# read before the lock, so no row stays locked on a network call
@@ -88,11 +99,11 @@ class WikiMigration(Document):
 	def retry(self):
 		if self.status in ACTIVE_STATUSES and not self.is_stale:
 			frappe.throw(_("This migration is already running."))
-		items = [d for d in self.items if d.status in ("Failed", "Pending")]
-		if not items:
+		if not self.can_retry:
 			frappe.throw(_("There are no failed pages to retry."))
-		for d in items:
-			d.update({"status": "Pending", "message": None})
+		for d in self.items:
+			if d.status in RETRY_STATUSES:
+				d.update({"status": "Pending", "message": None})
 		self.update({"status": "Queued", "error": None})
 		self.save()
 		self.enqueue()
