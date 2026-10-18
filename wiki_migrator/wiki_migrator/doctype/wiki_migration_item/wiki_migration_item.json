@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-10-17 20:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "wiki_route",
+  "title",
+  "target",
+  "category",
+  "category_name",
+  "parent_category_name",
+  "article",
+  "status",
+  "message"
+ ],
+ "fields": [
+  {
+   "fieldname": "wiki_route",
+   "fieldtype": "Data",
+   "label": "Wiki route",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "target",
+   "fieldtype": "Data",
+   "label": "Target",
+   "read_only": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Data",
+   "label": "Category",
+   "read_only": 1
+  },
+  {
+   "fieldname": "category_name",
+   "fieldtype": "Data",
+   "label": "Category name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "parent_category_name",
+   "fieldtype": "Data",
+   "label": "Parent category name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "article",
+   "fieldtype": "Data",
+   "label": "Article",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nImported\nUpdated\nSkipped\nFailed",
+   "default": "Pending",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "label": "Message",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-17 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Wiki Migrator",
+ "name": "Wiki Migration Item",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
