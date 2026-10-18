@@ -147,7 +147,8 @@ interface WikiImport {
   space_title: string;
   status: string;
   error: string | null;
-  stale?: boolean;
+  running: boolean;
+  stale: boolean;
   can_retry: boolean;
   counts: Record<
     "total" | "imported" | "updated" | "skipped" | "failed" | "pending",
@@ -175,12 +176,7 @@ const importDoc = createResource({
 const wikiImport = computed<WikiImport | null>(() => importDoc.data);
 
 const status = computed(() => wikiImport.value?.status);
-// A stale run claims to be Queued/Running but its job is gone (worker died).
-const isRunning = computed(
-  () =>
-    (status.value === "Queued" || status.value === "Running") &&
-    !wikiImport.value?.stale
-);
+const isRunning = computed(() => !!wikiImport.value?.running);
 
 const progress = computed(() => {
   const { total, pending } = wikiImport.value!.counts;

@@ -618,11 +618,13 @@ class TestMigrationJob(MigrationCase):
 		frappe.db.set_value("Wiki Migration", name, "status", "Running")
 
 		with patch(IS_JOB_ENQUEUED, return_value=True):
-			self.assertFalse(get_import(name)["stale"])
+			result = get_import(name)
+			self.assertEqual((result["running"], result["stale"], result["can_retry"]), (True, False, False))
 			with self.assertRaisesRegex(frappe.ValidationError, "already running"):
 				retry_failed(name)
 
 		with patch(IS_JOB_ENQUEUED, return_value=False):
-			self.assertTrue(get_import(name)["stale"])
+			result = get_import(name)
+			self.assertEqual((result["running"], result["stale"], result["can_retry"]), (False, True, True))
 			self.assertEqual(retry_failed(name)["status"], "Queued")
 		self.assertEqual(self.enqueue.call_count, 2)

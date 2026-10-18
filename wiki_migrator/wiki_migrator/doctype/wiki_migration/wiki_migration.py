@@ -54,10 +54,14 @@ class WikiMigration(Document):
 		return self.status in ACTIVE_STATUSES and not is_job_enqueued(self.job_id)
 
 	@property
+	def is_running(self) -> bool:
+		return self.status in ACTIVE_STATUSES and not self.is_stale
+
+	@property
 	def can_retry(self) -> bool:
 		"""Pages left to import, or a run that stopped after them: in its link or
 		cleanup step, or with its worker. A rerun skips the pages already done."""
-		if self.status in ACTIVE_STATUSES and not self.is_stale:
+		if self.is_running:
 			return False
 		return self.status in ("Failed", *ACTIVE_STATUSES) or any(
 			d.status in RETRY_STATUSES for d in self.items
@@ -97,7 +101,7 @@ class WikiMigration(Document):
 		self.enqueue()
 
 	def retry(self):
-		if self.status in ACTIVE_STATUSES and not self.is_stale:
+		if self.is_running:
 			frappe.throw(_("This migration is already running."))
 		if not self.can_retry:
 			frappe.throw(_("There are no failed pages to retry."))
