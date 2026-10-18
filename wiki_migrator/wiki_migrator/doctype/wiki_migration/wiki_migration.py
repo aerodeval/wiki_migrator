@@ -267,7 +267,8 @@ class WikiMigration(Document):
 			except Exception as e:
 				undo_error = self.undo_page(helpdesk, created)
 				# an article it couldn't remove stays on the item, so a retry finishes it
-				d.article, d.category = created.article if undo_error else None, None
+				d.article = created.article if undo_error else None
+				d.category = None
 				if isinstance(e, JobTimeoutException):
 					# the run stops here, so the item's article is saved now
 					frappe.db.set_value("Wiki Migration Item", d.name, "article", d.article)
@@ -302,7 +303,7 @@ class WikiMigration(Document):
 		category: str,
 		imported: dict,
 		created: frappe._dict,
-	) -> tuple:
+	) -> tuple[str, str | None, str | None, str | None]:
 		"""Copy one wiki page into an article; the item's new status, message, article and
 		category. `created` holds the article the page makes or takes over, and its files."""
 		existing = imported.get(d.wiki_route)
