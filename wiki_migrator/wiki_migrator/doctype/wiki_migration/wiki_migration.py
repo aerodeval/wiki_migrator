@@ -74,6 +74,7 @@ class WikiMigration(Document):
 		status = frappe.db.get_value("Wiki Migration", self.name, "status", for_update=True)
 		if status != "Draft":
 			frappe.throw(_("This migration has already started."))
+		self.validate_no_other_run()
 		self.validate_plan(plan, categories)
 		self.update(
 			{
@@ -105,6 +106,7 @@ class WikiMigration(Document):
 			frappe.throw(_("This migration is already running."))
 		if not self.can_retry:
 			frappe.throw(_("There are no failed pages to retry."))
+		self.validate_no_other_run()
 		for d in self.items:
 			if d.status in RETRY_STATUSES:
 				d.update({"status": "Pending", "message": None})
@@ -122,6 +124,23 @@ class WikiMigration(Document):
 			enqueue_after_commit=True,
 			name=self.name,
 		)
+
+	def validate_no_other_run(self):
+		"""Two runs between the same sites would each import the pages the other hasn't yet."""
+		others = frappe.get_all(
+			"Wiki Migration",
+			filters={
+				"name": ("!=", self.name),
+				"wiki_url": self.wiki_url,
+				"helpdesk_url": self.helpdesk_url,
+				"status": ("in", ACTIVE_STATUSES),
+			},
+			pluck="name",
+		)
+		if any(frappe.get_doc("Wiki Migration", name).is_running for name in others):
+			frappe.throw(
+				_("Another migration from this wiki to this helpdesk is running. Try again when it's done.")
+			)
 
 	def validate_plan(self, plan: dict, categories: dict[str, dict]):
 		pages = plan.get("pages") or []
@@ -236,12 +255,14 @@ class WikiMigration(Document):
 					wiki, helpdesk, d, targets[d.target], imported, created
 				)
 			except JobTimeoutException:
-				self.undo_page(helpdesk, created)
+				self.undo_page(helpdesk, d, created)
+				# the run stops here, so the item forgets its undone article now
+				frappe.db.set_value("Wiki Migration Item", d.name, "article", d.article)
+				frappe.db.commit()
 				raise
 			except Exception as e:
 				message = get_error_message(e, d.wiki_route)
-				d.status, d.message = "Failed", message + self.undo_page(helpdesk, created)
-				d.article = d.category = None
+				d.status, d.message = "Failed", message + self.undo_page(helpdesk, d, created)
 			d.category_name, d.parent_category_name = get_category_names(categories, d.category)
 			frappe.clear_messages()
 			frappe.db.set_value(
@@ -273,26 +294,34 @@ class WikiMigration(Document):
 		"""Copy one wiki page into an article; the item's new status and message."""
 		d.article = d.category = None
 		existing = imported.get(d.wiki_route)
-		if existing and self.on_existing == "Skip":
+		finished = bool(existing) and existing.finished
+		if finished and self.on_existing == "Skip":
 			d.article, d.category = existing.article, existing.category
 			return "Skipped", None
 		page = WikiPage(wiki.get_page_html(d.wiki_route), wiki.base_url, d.wiki_route)
 		if page.is_empty:
 			return "Skipped", _("The page is empty in the wiki")
 		title = d.title[:NAME_LENGTH]
-		if existing:
+		if finished:
 			article, category = existing.article, existing.category
+		elif existing:
+			# a stopped run made it but never finished it: this page takes it over
+			article = created.article = d.article = existing.article
 		else:
 			# a draft without a category until it's complete: the helpdesk refuses to
 			# delete a category's last article, which undoing a failed page would be
-			article = created.article = helpdesk.insert(ARTICLE, {"title": title, "status": "Draft"})
+			article = helpdesk.insert(ARTICLE, {"title": title, "status": "Draft"})
+			created.article = d.article = article
+			# recorded at once, so a run stopped before the page is done finds it again
+			frappe.db.set_value("Wiki Migration Item", d.name, "article", article)
+			frappe.db.commit()
 		warnings = self.copy_assets(wiki, helpdesk, page, article, bool(existing), created.files)
 		values = {"title": title, "content": page.html}
-		if not existing:
+		if not finished:
 			values.update(category=category, status=self.article_status, visibility=self.visibility)
 		helpdesk.update(ARTICLE, article, values)
 		d.article, d.category = article, category
-		return ("Updated" if existing else "Imported"), "\n".join(warnings) or None
+		return ("Updated" if finished else "Imported"), "\n".join(warnings) or None
 
 	def copy_assets(
 		self,
@@ -326,9 +355,10 @@ class WikiMigration(Document):
 		file_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
 		return helpdesk.upload_file(article, file_name, content)
 
-	def undo_page(self, helpdesk: HelpdeskClient, created: frappe._dict) -> str:
-		"""The helpdesk can't roll back, so what a failed page made there is deleted.
-		A note for the item's message when even that fails."""
+	def undo_page(self, helpdesk: HelpdeskClient, d, created: frappe._dict) -> str:
+		"""The helpdesk can't roll back, so what a failed page made there is deleted and
+		the item forgets it. A note for the item's message when even that fails; the item
+		then keeps its article, so a retry finishes that one instead of making another."""
 		try:
 			for file in created.files:
 				helpdesk.delete("File", file)
@@ -336,6 +366,7 @@ class WikiMigration(Document):
 				helpdesk.delete(ARTICLE, created.article)
 		except frappe.ValidationError as e:
 			return "\n" + _("Couldn't remove what it made on the helpdesk: {0}").format(e)
+		d.article = d.category = None
 		return ""
 
 	def link_imported_articles(self, helpdesk: HelpdeskClient, categories: dict[str, dict]):
@@ -364,14 +395,14 @@ class WikiMigration(Document):
 		self, helpdesk: HelpdeskClient, categories: dict[str, dict]
 	) -> dict[str, frappe._dict]:
 		"""The article each page of this wiki was last migrated to on this helpdesk,
-		when it's still there."""
+		when it's still there. One whose page never finished is not `finished`."""
 		item = DocType("Wiki Migration Item")
 		migration = DocType("Wiki Migration")
 		rows = (
 			frappe.qb.from_(item)
 			.join(migration)
 			.on(migration.name == item.parent)
-			.select(item.wiki_route, item.article)
+			.select(item.wiki_route, item.article, item.status)
 			.where(migration.wiki_url == self.wiki_url)
 			.where(migration.helpdesk_url == self.helpdesk_url)
 			.where(item.article.isnotnull() & (item.article != ""))
@@ -394,6 +425,7 @@ class WikiMigration(Document):
 				category=article["category"],
 				category_name=category_name,
 				parent_category_name=parent_category_name,
+				finished=row.status not in RETRY_STATUSES,
 			)
 		return imported
 

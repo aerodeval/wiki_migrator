@@ -216,7 +216,9 @@ def _get_linked_space(wiki_url: str, spaces: list[dict]) -> str | None:
 
 def _mark_imported(nodes: list[dict], imported: dict) -> None:
 	for node in nodes:
-		node["imported"] = imported.get(node["route"]) if node["route"] else None
+		row = imported.get(node["route"]) if node["route"] else None
+		# a page whose article a stopped run never finished isn't imported yet
+		node["imported"] = row if row and row.finished else None
 		_mark_imported(node["children"], imported)
 
 

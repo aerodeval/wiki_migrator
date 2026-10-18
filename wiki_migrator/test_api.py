@@ -6,6 +6,7 @@ import frappe
 import requests
 from frappe.core.doctype.file.utils import get_content_hash
 from frappe.tests import IntegrationTestCase
+from rq.timeouts import JobTimeoutException
 
 from wiki_migrator.api import (
 	connect,
@@ -609,6 +610,51 @@ class TestMigrationJob(MigrationCase):
 		self.assertFalse(result["can_retry"])
 		release = self.helpdesk.articles(title="Release")[0]
 		self.assertIn('href="/helpdesk/kb-public/articles/', release["content"])
+
+	def test_retry_after_a_stopped_worker_finishes_the_same_article(self):
+		name = self.connect()["name"]
+		# the worker dies after the article is made, before the page is done
+		with patch.object(WikiMigration, "copy_assets", side_effect=SystemExit):
+			with self.assertRaises(SystemExit):
+				self.migrate(name, self.pages()[:1], self.targets)
+		(article,) = self.helpdesk.articles(title="Debugging")
+		self.assertEqual(get_import(name)["items"][0]["article"], article["name"])
+
+		with patch(IS_JOB_ENQUEUED, return_value=False):
+			retry_failed(name)
+		run_migration(name)
+
+		item = get_import(name)["items"][0]
+		self.assertEqual((item["status"], item["article"]), ("Imported", article["name"]))
+		self.assertEqual(len(self.helpdesk.articles(title="Debugging")), 1)
+		self.assertEqual(article["category"], self.helpdesk.category("Backend")["name"])
+
+	def test_timed_out_page_is_undone_and_made_again_on_retry(self):
+		name = self.connect()["name"]
+		with patch.object(WikiMigration, "copy_assets", side_effect=JobTimeoutException):
+			result = self.migrate(name, self.pages()[:1], self.targets)
+		self.assertEqual(result["status"], "Failed")
+		self.assertIsNone(result["items"][0]["article"])
+		self.assertFalse(self.helpdesk.articles(title="Debugging"))
+
+		retry_failed(name)
+		run_migration(name)
+
+		item = get_import(name)["items"][0]
+		self.assertEqual(item["status"], "Imported")
+		self.assertEqual([d["name"] for d in self.helpdesk.articles(title="Debugging")], [item["article"]])
+
+	def test_only_one_run_between_two_sites_at_a_time(self):
+		plan = {"targets": self.targets, "pages": self.pages()}
+		start_import(self.connect()["name"], plan)
+		second = self.connect()["name"]
+
+		with patch(IS_JOB_ENQUEUED, return_value=True):
+			with self.assertRaisesRegex(frappe.ValidationError, "Another migration"):
+				start_import(second, plan)
+		# the first run's worker is gone, so it no longer blocks
+		with patch(IS_JOB_ENQUEUED, return_value=False):
+			self.assertEqual(start_import(second, plan)["status"], "Queued")
 
 	def test_unreachable_wiki_fails_the_whole_run(self):
 		name = self.connect()["name"]
