@@ -512,9 +512,9 @@ class TestMigrationJob(MigrationCase):
 		self.assertIn("missing.png", debugging.message)
 
 		release = items["handbook/release"].article
-		self.assertIn(f'href="/help/articles/{release}#steps"', article["content"])
+		self.assertIn(f'href="/helpdesk/kb-public/articles/{release}#steps"', article["content"])
 		self.assertIn(
-			f'href="/help/articles/{debugging.article}"',
+			f'href="/helpdesk/kb-public/articles/{debugging.article}"',
 			self.helpdesk.records[ARTICLE][release]["content"],
 		)
 		self.assertEqual(get_recent()[0]["counts"]["imported"], 4)

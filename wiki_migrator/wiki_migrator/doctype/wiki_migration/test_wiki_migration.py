@@ -295,7 +295,7 @@ class TestWikiPage(FrappeTestCase):
 
 		rewritten = rewrite_wiki_links(html, {"handbook/sales": "a1b2c3"})
 
-		self.assertIn('href="/help/articles/a1b2c3#pricing"', rewritten)
+		self.assertIn('href="/helpdesk/kb-public/articles/a1b2c3#pricing"', rewritten)
 		# a route that wasn't imported keeps pointing at the wiki
 		self.assertIn(f'href="{BASE_URL}/app/todo"', rewritten)
 		# nothing left to change is not a change

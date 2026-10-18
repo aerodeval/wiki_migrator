@@ -192,7 +192,7 @@ def rewrite_wiki_links(html: str, articles: dict[str, str]) -> str | None:
 		if not article:
 			continue
 		fragment = urlsplit(link["href"]).fragment
-		href = f"/help/articles/{article}" + (f"#{fragment}" if fragment else "")
+		href = f"/helpdesk/kb-public/articles/{article}" + (f"#{fragment}" if fragment else "")
 		if link["href"] != href:
 			link["href"] = href
 			changed = True
