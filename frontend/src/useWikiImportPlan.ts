@@ -65,13 +65,11 @@ const EXISTING = "existing:";
 
 const isGeneral = (name: string) => name.trim().toLowerCase() === "general";
 
-export const isGroup = (item: WikiGroup | WikiPage): item is WikiGroup =>
+const isGroup = (item: WikiGroup | WikiPage): item is WikiGroup =>
   "items" in item;
 
-export function categoryLabel(category: ArticleCategory, parentName?: string) {
-  return parentName
-    ? `${parentName} › ${category.category_name}`
-    : category.category_name;
+export function categoryLabel(name: string, parentName?: string | null) {
+  return parentName ? `${parentName} › ${name}` : name;
 }
 
 export function useWikiImportPlan(
@@ -294,7 +292,7 @@ export function useWikiImportPlan(
       .map((c) => ({
         value: c.name,
         label: categoryLabel(
-          c,
+          c.category_name,
           c.parent_category
             ? categoryByName.value.get(c.parent_category)?.category_name
             : undefined,

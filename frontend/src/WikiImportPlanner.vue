@@ -152,7 +152,15 @@
           />
           <Badge
             v-else-if="row.page.imported"
-            :label="__('Imported · {0}', importedIn(row.page.imported))"
+            :label="
+              __(
+                'Imported · {0}',
+                categoryLabel(
+                  row.page.imported.category_name,
+                  row.page.imported.parent_category_name
+                )
+              )
+            "
             :title="__('Updates keep the article in its current category')"
             theme="blue"
             variant="subtle"
@@ -232,10 +240,10 @@ import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   type ArticleCategory,
-  type ImportedArticle,
   type WikiGroup,
   type WikiNode,
   type WikiRow,
+  categoryLabel,
   useWikiImportPlan,
 } from "./useWikiImportPlan";
 import { __, getErrorMessage } from "./utils";
@@ -322,12 +330,6 @@ function groupState(group: WikiGroup) {
 }
 
 const pageCount = (n: number) => (n === 1 ? __("1 page") : __("{0} pages", n));
-
-function importedIn(imported: ImportedArticle) {
-  return imported.parent_category_name
-    ? `${imported.parent_category_name} › ${imported.category_name}`
-    : imported.category_name;
-}
 
 function setParent(
   group: WikiGroup,
