@@ -364,11 +364,10 @@ class WikiMigration(Document):
 			# a draft a stopped run left goes too; until it can, the page fails and keeps it
 			if created.article and (undo_error := self.undo_page(helpdesk, created)):
 				return {
+					**kept,
 					"status": "Failed",
 					"message": f"{message}\n{undo_error}",
 					"article": created.article,
-					"category": None,
-					"content_hash": None,
 				}
 			# an article imported before keeps what it had
 			return {**kept, "status": "Skipped", "message": message}
