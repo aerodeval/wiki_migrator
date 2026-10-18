@@ -52,9 +52,7 @@
 				<Switch
 					:model-value="wikiImport.keep_in_sync"
 					:label="__('Keep in sync')"
-					:description="
-						__('Every hour, update the articles whose wiki page changed.')
-					"
+					:description="__('Every hour, update the articles whose wiki page changed.')"
 					:disabled="keepInSync.loading"
 					control-position="start"
 					@update:model-value="keepInSync.submit({ keep_in_sync: $event })"
