@@ -9,7 +9,7 @@ from frappe import _
 from frappe.core.doctype.file.utils import get_content_hash
 from frappe.model.document import Document
 from frappe.query_builder import DocType, Order
-from frappe.utils import now_datetime, time_diff_in_seconds
+from frappe.utils import add_to_date, now_datetime, time_diff_in_seconds
 from frappe.utils.background_jobs import is_job_enqueued
 from rq.timeouts import JobTimeoutException
 
@@ -29,6 +29,8 @@ NAME_LENGTH = 140
 JOB_TIMEOUT = 4 * 60 * 60
 ACTIVE_STATUSES = ("Queued", "Running")
 RETRY_STATUSES = ("Failed", "Pending")
+# how long a kept migration waits between syncs; a run's end bumps its `modified`
+SYNC_INTERVAL = 60 * 60
 # enqueue_after_commit adds a start's job only after its commit; until then it's this new
 ENQUEUE_GRACE = 10
 # chosen per run in the planner, which holds their defaults
@@ -520,11 +522,16 @@ def run_migration(name: str):
 
 
 def sync_migrations():
-	"""Hourly: sync the migrations kept in sync. The least recently changed go first, so
-	one that had to wait for another run between its sites goes ahead next time."""
+	"""Every few minutes: sync the migrations kept in sync that weren't synced within
+	SYNC_INTERVAL. One refused because another run between its sites is running goes
+	again at the next check."""
 	for name in frappe.get_all(
 		"Wiki Migration",
-		filters={"keep_in_sync": 1, "status": ("!=", "Draft")},
+		filters={
+			"keep_in_sync": 1,
+			"status": ("!=", "Draft"),
+			"modified": ("<", add_to_date(now_datetime(), seconds=-SYNC_INTERVAL)),
+		},
 		order_by="modified asc",
 		pluck="name",
 	):
@@ -532,7 +539,7 @@ def sync_migrations():
 			frappe.get_doc("Wiki Migration", name).sync()
 			frappe.db.commit()
 		except frappe.ValidationError:
-			# it, or another run between its sites, is running: the next hour tries again
+			# it, or another run between its sites, is running: the next check tries again
 			frappe.db.rollback()
 			frappe.clear_messages()
 

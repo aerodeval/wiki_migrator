@@ -846,16 +846,23 @@ class TestMigrationJob(MigrationCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Start the migration"):
 			sync_now(self.connect()["name"])
 
-	def test_migrations_kept_in_sync_sync_hourly(self):
-		kept, other = self.migrated(), self.migrated()
-		set_keep_in_sync(kept, True)
+	def test_kept_migrations_sync_hourly_even_when_they_share_sites(self):
+		first, second, other = self.migrated(), self.migrated(), self.migrated()
+		for name, hours in ((first, -3), (second, -2)):
+			set_keep_in_sync(name, True)
+			synced_at = add_to_date(now_datetime(), hours=hours)
+			frappe.db.set_value("Wiki Migration", name, "modified", synced_at, update_modified=False)
 		self.enqueue.reset_mock()
 
+		# second is refused: first, between the same sites, was just queued
 		sync_migrations()
-
-		self.assertEqual([c.kwargs["name"] for c in self.enqueue.call_args_list], [kept])
-		# a migration that is running is left for the next hour
-		with patch(IS_JOB_ENQUEUED, return_value=True):
-			sync_migrations()
-		self.assertEqual(self.enqueue.call_count, 1)
+		self.assertEqual([c.kwargs["name"] for c in self.enqueue.call_args_list], [first])
+		run_migration(first)
+		# a later check, once first is done, syncs second
+		sync_migrations()
+		self.assertEqual([c.kwargs["name"] for c in self.enqueue.call_args_list], [first, second])
+		run_migration(second)
+		# both synced within the hour, so both wait
+		sync_migrations()
+		self.assertEqual(self.enqueue.call_count, 2)
 		self.assertFalse(get_import(other)["keep_in_sync"])

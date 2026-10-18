@@ -198,7 +198,8 @@ website_route_rules = [
 # ---------------
 
 scheduler_events = {
-	"hourly": ["wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_migration.sync_migrations"],
+	# sync_migrations syncs only those not synced for an hour, so one refused goes 10 minutes later
+	"cron": {"*/10 * * * *": ["wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_migration.sync_migrations"]},
 }
 
 # Testing
