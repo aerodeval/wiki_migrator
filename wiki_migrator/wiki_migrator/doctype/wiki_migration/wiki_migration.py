@@ -72,11 +72,12 @@ class WikiMigration(Document):
 	def start(self, plan: dict):
 		# read before the lock, so no row stays locked on a network call
 		categories = self.get_categories(self.get_helpdesk_client())
-		# locked, so a second tab starting the same draft waits and then sees it started
-		status = frappe.db.get_value("Wiki Migration", self.name, "status", for_update=True)
+		# locks this pair's rows, this one too, so a second tab starting the same draft
+		# waits and then sees it started
+		self.validate_no_other_run()
+		status = frappe.db.get_value("Wiki Migration", self.name, "status")
 		if status != "Draft":
 			frappe.throw(_("This migration has already started."))
-		self.validate_no_other_run()
 		self.validate_plan(plan, categories)
 		self.update(
 			{
@@ -128,17 +129,18 @@ class WikiMigration(Document):
 		)
 
 	def validate_no_other_run(self):
-		"""Two runs between the same sites would each import the pages the other hasn't yet."""
-		others = frappe.get_all(
-			"Wiki Migration",
-			filters={
-				"name": ("!=", self.name),
-				"wiki_url": self.wiki_url,
-				"helpdesk_url": self.helpdesk_url,
-				"status": ("in", ACTIVE_STATUSES),
-			},
-			pluck="name",
+		"""Two runs between the same sites would each import the pages the other hasn't yet.
+		The pair's rows stay locked, so two starts check one after the other."""
+		migration = DocType("Wiki Migration")
+		rows = (
+			frappe.qb.from_(migration)
+			.select(migration.name, migration.status)
+			.where(migration.wiki_url == self.wiki_url)
+			.where(migration.helpdesk_url == self.helpdesk_url)
+			.for_update()
+			.run(as_dict=True)
 		)
+		others = [d.name for d in rows if d.name != self.name and d.status in ACTIVE_STATUSES]
 		if any(frappe.get_doc("Wiki Migration", name).is_running for name in others):
 			frappe.throw(
 				_("Another migration from this wiki to this helpdesk is running. Try again when it's done.")
