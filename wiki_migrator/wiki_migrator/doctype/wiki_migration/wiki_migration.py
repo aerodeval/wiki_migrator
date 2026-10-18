@@ -356,7 +356,8 @@ class WikiMigration(Document):
 				content = wiki.download(url)
 				content_hash = get_content_hash(content)
 				if content_hash not in file_urls:
-					file = self.upload_file(helpdesk, article, url, content)
+					file_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
+					file = helpdesk.upload_file(article, file_name, content)
 					new_files.append(file["name"])
 					file_urls[content_hash] = file["file_url"]
 				urls[url] = file_urls[content_hash]
@@ -365,10 +366,6 @@ class WikiMigration(Document):
 				warnings.append(_("Couldn't copy {0}: {1}").format(url, e))
 		page.replace_urls(urls)
 		return warnings
-
-	def upload_file(self, helpdesk: HelpdeskClient, article: str, url: str, content: bytes) -> dict:
-		file_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
-		return helpdesk.upload_file(article, file_name, content)
 
 	def undo_page(self, helpdesk: HelpdeskClient, created: frappe._dict) -> str | None:
 		"""The helpdesk can't roll back, so what a failed page made there is deleted.
