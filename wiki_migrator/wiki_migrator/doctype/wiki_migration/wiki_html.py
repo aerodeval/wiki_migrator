@@ -11,7 +11,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
-from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_client import get_origin
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.http import get_origin
 
 HEADINGS = ["h1", "h2", "h3", "h4", "h5", "h6"]
 FILE_PATHS = ("/files/", "/private/files/")

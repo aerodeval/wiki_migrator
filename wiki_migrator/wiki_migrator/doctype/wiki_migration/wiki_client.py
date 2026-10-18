@@ -12,17 +12,9 @@ import frappe
 import requests
 from frappe import _
 from frappe.core.api.file import get_max_file_size
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
-USER_AGENT = "Frappe Wiki Migrator"
-TIMEOUT = 30
-RETRY = Retry(
-	total=3,
-	backoff_factor=1,
-	status_forcelist=[429, 500, 502, 503, 504],
-	raise_on_status=False,
-)
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.http import get_origin, new_session, send
+
 PAGE_DATA_METHOD = "wiki.frappe_wiki.doctype.wiki_document.wiki_document.get_page_data"
 TREE_METHOD = "wiki.api.wiki_space.get_wiki_tree"
 # a route no wiki has: the wiki answers "Page not found", any other site something else
@@ -121,30 +113,17 @@ class WikiClient:
 		"""GET `path` on the wiki. Only the connect `probe` may be redirected to another
 		site; every other request stays on the wiki's origin, key or not."""
 		url = path if path.startswith(("http://", "https://")) else self.base_url + path
-		response = self.send(url, probe, **kwargs)
+		response = send(self.session, "GET", url, self.base_url, self.auth, probe, **kwargs)
 		redirects = 0
 		while response.is_redirect and not probe and redirects < MAX_REDIRECTS:
 			url = urljoin(url, response.headers["Location"])
 			if get_origin(url) != self.base_url:
 				frappe.throw(_("The wiki redirected {0} to another site.").format(response.url))
-			response = self.send(url, probe, **kwargs)
+			response = send(self.session, "GET", url, self.base_url, self.auth, **kwargs)
 			redirects += 1
 		if check:
 			self.check(response)
 		return response
-
-	def send(self, url: str, probe: bool, **kwargs) -> requests.Response:
-		headers = {}
-		if self.auth and not probe and get_origin(url) == self.base_url:
-			headers["Authorization"] = self.auth
-		try:
-			return self.session.get(url, headers=headers, timeout=TIMEOUT, allow_redirects=probe, **kwargs)
-		except requests.exceptions.SSLError:
-			frappe.throw(_("Couldn't verify the SSL certificate of {0}.").format(self.base_url))
-		except requests.exceptions.Timeout:
-			frappe.throw(_("{0} took too long to respond. Try again later.").format(self.base_url))
-		except requests.exceptions.RequestException:
-			frappe.throw(_("Couldn't reach {0}. Check the URL and try again.").format(self.base_url))
 
 	def check(self, response: requests.Response) -> None:
 		if response.status_code in (401, 403):
@@ -153,31 +132,6 @@ class WikiClient:
 			frappe.throw(_("The wiki denied access to {0}.").format(response.url))
 		if not response.ok or response.is_redirect:
 			frappe.throw(_("The wiki answered {0} for {1}.").format(response.status_code, response.url))
-
-
-def new_session() -> requests.Session:
-	"""A session that names itself and retries rate limits, server errors and drops."""
-	session = requests.Session()
-	session.headers["User-Agent"] = USER_AGENT
-	session.mount("https://", HTTPAdapter(max_retries=RETRY))
-	session.mount("http://", HTTPAdapter(max_retries=RETRY))
-	return session
-
-
-def get_origin(url: str) -> str:
-	parts = urlsplit(url)
-	return f"{parts.scheme}://{parts.netloc}"
-
-
-def normalize_url(url: str) -> str:
-	"""`url` with a scheme, cut down to its origin; throws when it isn't a web address."""
-	url = (url or "").strip()
-	if "://" not in url:
-		url = f"https://{url}"
-	parts = urlsplit(url)
-	if parts.scheme not in ("http", "https") or not parts.hostname:
-		frappe.throw(_("Enter a valid URL, like https://site.example.com."))
-	return get_origin(url)
 
 
 def parse_index(text: str) -> list[dict]:

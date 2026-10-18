@@ -56,16 +56,22 @@ def make_response(status: int, body, url: str) -> requests.Response:
 	return response
 
 
-def mock_wiki(case, pages: dict | None = None, files: dict | None = None, documents=None):
-	"""Answer the wiki client's requests for `WIKI_URL`, so no test reaches the network.
+def mock_wiki(case, pages: dict | None = None, files: dict | None = None, documents=None, error=None):
+	"""Answer the wiki client's requests for `WIKI_URL`, so no test reaches the network;
+	the rest go to the test's helpdesk.
 
 	`pages` maps a route to its rendered HTML or to an HTTP status the page fails with.
 	`files` maps a `/files/...` path to its bytes. `documents` maps any other path
 	(`/llms.txt`, an API resource) to its text or JSON. Anything else is a 404.
+	`error` is raised for every wiki request instead.
 	"""
 	pages, files, documents = pages or {}, files or {}, documents or {}
 
-	def get(url, params=None, **kwargs):
+	def request(method, url, params=None, **kwargs):
+		if not url.startswith(WIKI_URL):
+			return case.helpdesk.respond(method, url, params=params, **kwargs)
+		if error:
+			raise error
 		path = url.removeprefix(WIKI_URL)
 		if path.endswith(".get_page_data"):
 			page = pages.get(params["route"])
@@ -80,7 +86,7 @@ def mock_wiki(case, pages: dict | None = None, files: dict | None = None, docume
 			return make_response(200, documents[path], url)
 		return make_response(404, "Not found", url)
 
-	return case.enterContext(patch.object(requests.Session, "get", side_effect=get))
+	return case.enterContext(patch.object(requests.Session, "request", side_effect=request))
 
 
 class FakeHelpdesk:
@@ -274,7 +280,7 @@ class TestAccess(MigrationCase):
 
 class TestConnect(MigrationCase):
 	def test_connect_lists_spaces_and_reuses_the_draft(self):
-		session_get = mock_wiki(self, documents=PUBLIC_DOCUMENTS)
+		session_request = mock_wiki(self, documents=PUBLIC_DOCUMENTS)
 
 		result = self.connect("wiki.example.com/handbook/debugging")
 
@@ -286,7 +292,9 @@ class TestConnect(MigrationCase):
 		self.assertTrue(result["supports_subcategories"])
 		self.assertEqual(self.connect(WIKI_URL)["name"], result["name"])
 		# the helpdesk key never goes to the wiki, and its secret is stored encrypted
-		self.assertFalse([c for c in session_get.call_args_list if c.kwargs.get("headers")])
+		wiki_calls = [c for c in session_request.call_args_list if c.args[1].startswith(WIKI_URL)]
+		self.assertTrue(wiki_calls)
+		self.assertFalse([c for c in wiki_calls if c.kwargs.get("headers")])
 		self.assertNotEqual(
 			frappe.db.get_value("Wiki Migration", result["name"], "helpdesk_api_secret"),
 			"hd-secret",
@@ -604,7 +612,7 @@ class TestMigrationJob(MigrationCase):
 
 	def test_unreachable_wiki_fails_the_whole_run(self):
 		name = self.connect()["name"]
-		mock_wiki(self).side_effect = requests.exceptions.ConnectionError()
+		mock_wiki(self, error=requests.exceptions.ConnectionError())
 
 		result = self.migrate(name, self.pages(), self.targets)
 

@@ -14,10 +14,8 @@ from frappe import _
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.helpdesk_client import (
 	HelpdeskClient,
 )
-from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_client import (
-	WikiClient,
-	normalize_url,
-)
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.http import normalize_url
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_client import WikiClient
 
 ITEM_FIELDS = [
 	"wiki_route",

@@ -12,11 +12,7 @@ import requests
 from frappe import _
 from frappe.utils import strip_html
 
-from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_client import (
-	TIMEOUT,
-	get_origin,
-	new_session,
-)
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.http import get_origin, new_session, send
 
 ARTICLE = "HD Article"
 CATEGORY = "HD Article Category"
@@ -32,7 +28,9 @@ class HelpdeskClient:
 
 	def resolve_base_url(self) -> str:
 		"""Check the site runs Frappe, following a redirect to its canonical origin."""
-		response = self.send("GET", self.base_url + "/api/method/ping", probe=True)
+		# the probe may follow a redirect anywhere, so it carries no key
+		url = self.base_url + "/api/method/ping"
+		response = send(self.session, "GET", url, self.base_url, auth=None, probe=True)
 		if not response.ok or _get_json(response).get("message") != "pong":
 			frappe.throw(_("{0} is not a Frappe site.").format(self.base_url))
 		self.base_url = get_origin(response.url)
@@ -130,29 +128,10 @@ class HelpdeskClient:
 		return self.request("GET", path, **kwargs).json()
 
 	def request(self, method: str, path: str, check: bool = True, **kwargs) -> requests.Response:
-		response = self.send(method, self.base_url + path, **kwargs)
+		response = send(self.session, method, self.base_url + path, self.base_url, self.auth, **kwargs)
 		if check:
 			self.check(response)
 		return response
-
-	def send(self, method: str, url: str, probe: bool = False, **kwargs) -> requests.Response:
-		# the probe may follow a redirect anywhere, so it carries no key
-		headers = {} if probe else {"Authorization": self.auth}
-		try:
-			return self.session.request(
-				method,
-				url,
-				headers=headers,
-				timeout=TIMEOUT,
-				allow_redirects=probe,
-				**kwargs,
-			)
-		except requests.exceptions.SSLError:
-			frappe.throw(_("Couldn't verify the SSL certificate of {0}.").format(self.base_url))
-		except requests.exceptions.Timeout:
-			frappe.throw(_("{0} took too long to respond. Try again later.").format(self.base_url))
-		except requests.exceptions.RequestException:
-			frappe.throw(_("Couldn't reach {0}. Check the URL and try again.").format(self.base_url))
 
 	def check(self, response: requests.Response) -> None:
 		if response.status_code == 401:
