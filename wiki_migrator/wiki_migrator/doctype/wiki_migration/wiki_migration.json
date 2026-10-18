@@ -23,6 +23,7 @@
   "visibility",
   "column_break_options",
   "on_existing",
+  "keep_in_sync",
   "section_break_items",
   "items",
   "error",
@@ -135,6 +136,12 @@
    "fieldtype": "Select",
    "label": "On existing",
    "options": "Update\nSkip"
+  },
+  {
+   "fieldname": "keep_in_sync",
+   "fieldtype": "Check",
+   "label": "Keep in sync",
+   "default": "0"
   },
   {
    "fieldname": "section_break_items",

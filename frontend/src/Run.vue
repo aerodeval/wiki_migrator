@@ -8,6 +8,13 @@
 				:loading="retry.loading"
 				@click="retry.submit()"
 			/>
+			<Button
+				v-if="wikiImport && !wikiImport.running"
+				:label="__('Sync now')"
+				iconLeft="lucide-refresh-cw"
+				:loading="sync.loading"
+				@click="sync.submit()"
+			/>
 			<Button :label="__('New migration')" :route="{ name: 'Connect' }" />
 			<Button
 				v-if="wikiImport"
@@ -42,6 +49,16 @@
 				<p class="truncate text-p-sm text-ink-gray-5">
 					{{ wikiImport.wiki_url }} → {{ wikiImport.helpdesk_url }}
 				</p>
+				<Switch
+					:model-value="wikiImport.keep_in_sync"
+					:label="__('Keep in sync')"
+					:description="
+						__('Every hour, update the articles whose wiki page changed.')
+					"
+					:disabled="keepInSync.loading"
+					control-position="start"
+					@update:model-value="keepInSync.submit({ keep_in_sync: $event })"
+				/>
 				<Progress :value="progress.percent" size="md" class="mt-1" />
 				<div class="flex flex-wrap gap-x-6 gap-y-1 text-p-sm text-ink-gray-6">
 					<span>
@@ -120,6 +137,7 @@ import {
 	ErrorMessage,
 	LoadingIndicator,
 	Progress,
+	Switch,
 	createResource,
 	usePageMeta,
 } from "frappe-ui";
@@ -127,7 +145,7 @@ import { computed, watch } from "vue";
 import AppHeader from "./AppHeader.vue";
 import { __, categoryLabel, getErrorMessage, importStatusTheme } from "./utils";
 
-type ItemStatus = "Pending" | "Imported" | "Updated" | "Skipped" | "Failed";
+type ItemStatus = "Pending" | "Imported" | "Updated" | "Unchanged" | "Skipped" | "Failed";
 
 interface WikiImportItem {
 	wiki_route: string;
@@ -152,7 +170,11 @@ interface WikiImport {
 	running: boolean;
 	stale: boolean;
 	can_retry: boolean;
-	counts: Record<"total" | "imported" | "updated" | "skipped" | "failed" | "pending", number>;
+	keep_in_sync: boolean;
+	counts: Record<
+		"total" | "imported" | "updated" | "unchanged" | "skipped" | "failed" | "pending",
+		number
+	>;
 	items: WikiImportItem[];
 }
 
@@ -162,6 +184,7 @@ const itemIcons: Record<ItemStatus, string> = {
 	Pending: "lucide-circle-dashed text-ink-gray-4",
 	Imported: "lucide-circle-check text-ink-green-6",
 	Updated: "lucide-refresh-cw text-ink-blue-5",
+	Unchanged: "lucide-check text-ink-gray-5",
 	Skipped: "lucide-circle-minus text-ink-gray-4",
 	Failed: "lucide-circle-x text-ink-red-6",
 };
@@ -188,6 +211,7 @@ const stats = computed(() => {
 	return [
 		{ label: __("Imported"), count: counts.imported },
 		{ label: __("Updated"), count: counts.updated },
+		{ label: __("Unchanged"), count: counts.unchanged },
 		{ label: __("Skipped"), count: counts.skipped },
 		{ label: __("Failed"), count: counts.failed },
 	];
@@ -203,6 +227,20 @@ const items = computed(() =>
 const retry = createResource({
 	url: "wiki_migrator.api.retry_failed",
 	makeParams: () => ({ name: props.name }),
+	onSuccess: () => importDoc.reload(),
+	onError: (error: unknown) => getErrorMessage(error, true),
+});
+
+const sync = createResource({
+	url: "wiki_migrator.api.sync_now",
+	makeParams: () => ({ name: props.name }),
+	onSuccess: () => importDoc.reload(),
+	onError: (error: unknown) => getErrorMessage(error, true),
+});
+
+const keepInSync = createResource({
+	url: "wiki_migrator.api.set_keep_in_sync",
+	makeParams: (values: { keep_in_sync: boolean }) => ({ name: props.name, ...values }),
 	onSuccess: () => importDoc.reload(),
 	onError: (error: unknown) => getErrorMessage(error, true),
 });

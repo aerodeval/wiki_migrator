@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import frappe
 from frappe import _
+from frappe.utils import sbool
 
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.helpdesk_client import (
 	HelpdeskClient,
@@ -38,10 +39,12 @@ MIGRATION_FIELDS = [
 	"article_status",
 	"visibility",
 	"on_existing",
+	"keep_in_sync",
 ]
 COUNTED_STATUSES = {
 	"imported": "Imported",
 	"updated": "Updated",
+	"unchanged": "Unchanged",
 	"skipped": "Skipped",
 	"failed": "Failed",
 	"pending": "Pending",
@@ -124,6 +127,19 @@ def retry_failed(name: str) -> dict:
 	return get_import(name)
 
 
+@frappe.whitelist(methods=["POST"])
+def sync_now(name: str) -> dict:
+	_get_migration(name).sync()
+	return get_import(name)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_keep_in_sync(name: str, keep_in_sync: bool) -> dict:
+	# not a save: that would write back the items while a run updates them
+	_get_migration(name).db_set("keep_in_sync", int(sbool(keep_in_sync)))
+	return get_import(name)
+
+
 @frappe.whitelist()
 def get_import(name: str) -> dict:
 	migration = _get_migration(name, "read")
@@ -138,6 +154,7 @@ def get_import(name: str) -> dict:
 	return {
 		**{field: migration.get(field) for field in MIGRATION_FIELDS},
 		"supports_subcategories": bool(migration.supports_subcategories),
+		"keep_in_sync": bool(migration.keep_in_sync),
 		"running": migration.is_running,
 		"stale": migration.is_stale,
 		"can_retry": migration.can_retry,

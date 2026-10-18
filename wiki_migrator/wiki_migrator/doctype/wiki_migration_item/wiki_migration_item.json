@@ -14,7 +14,9 @@
   "parent_category_name",
   "article",
   "status",
-  "message"
+  "message",
+  "finished",
+  "content_hash"
  ],
  "fields": [
   {
@@ -66,7 +68,7 @@
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "Pending\nImported\nUpdated\nSkipped\nFailed",
+   "options": "Pending\nImported\nUpdated\nUnchanged\nSkipped\nFailed",
    "default": "Pending",
    "in_list_view": 1,
    "read_only": 1
@@ -76,11 +78,24 @@
    "fieldtype": "Small Text",
    "label": "Message",
    "read_only": 1
+  },
+  {
+   "fieldname": "finished",
+   "fieldtype": "Check",
+   "label": "Finished",
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content hash",
+   "hidden": 1,
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-10-18 12:00:00.000000",
+ "modified": "2026-10-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Wiki Migrator",
  "name": "Wiki Migration Item",

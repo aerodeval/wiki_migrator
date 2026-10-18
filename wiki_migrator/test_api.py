@@ -16,11 +16,14 @@ from wiki_migrator.api import (
 	get_recent,
 	get_tree,
 	retry_failed,
+	set_keep_in_sync,
 	start_import,
+	sync_now,
 )
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_migration import (
 	WikiMigration,
 	run_migration,
+	sync_migrations,
 )
 
 WIKI_URL = "https://wiki.example.com"
@@ -62,7 +65,7 @@ def mock_wiki(case, pages: dict | None = None, files: dict | None = None, docume
 	"""Answer the wiki client's requests for `WIKI_URL`, so no test reaches the network;
 	the rest go to the test's helpdesk.
 
-	`pages` maps a route to its rendered HTML or to an HTTP status the page fails with.
+	`pages` maps a route to its rendered HTML, its page data, or an HTTP status it fails with.
 	`files` maps a `/files/...` path to its bytes. `documents` maps any other path
 	(`/llms.txt`, an API resource) to its text or JSON. Anything else is a 404.
 	`error` is raised for every wiki request instead.
@@ -81,7 +84,8 @@ def mock_wiki(case, pages: dict | None = None, files: dict | None = None, docume
 				return make_response(404, {"exc_type": "DoesNotExistError"}, url)
 			if isinstance(page, int):
 				return make_response(page, "Server error", url)
-			return make_response(200, {"message": {"rendered_content": page}}, url)
+			data = page if isinstance(page, dict) else {"rendered_content": page}
+			return make_response(200, {"message": data}, url)
 		if path in files:
 			return make_response(200, files[path], url)
 		if path in documents:
@@ -279,6 +283,8 @@ class TestAccess(MigrationCase):
 				lambda: get_import(name),
 				lambda: start_import(name, {}),
 				lambda: retry_failed(name),
+				lambda: sync_now(name),
+				lambda: set_keep_in_sync(name, True),
 				lambda: get_recent(),
 			):
 				with self.assertRaises(frappe.PermissionError):
@@ -511,7 +517,7 @@ class TestMigrationJob(MigrationCase):
 		self.assertEqual(result["status"], "Completed with Errors")
 		self.assertEqual(
 			result["counts"],
-			{"total": 6, "imported": 4, "updated": 0, "skipped": 1, "failed": 1, "pending": 0},
+			{"total": 6, "imported": 4, "updated": 0, "unchanged": 0, "skipped": 1, "failed": 1, "pending": 0},
 		)
 		self.assertEqual(items["handbook/blank"].message, "The page is empty in the wiki")
 		self.assertIn("500", items["handbook/broken"].message)
@@ -736,3 +742,83 @@ class TestMigrationJob(MigrationCase):
 			self.assertEqual((result["running"], result["stale"], result["can_retry"]), (False, True, True))
 			self.assertEqual(retry_failed(name)["status"], "Queued")
 		self.assertEqual(self.enqueue.call_count, 2)
+
+	def migrated(self) -> str:
+		name = self.connect()["name"]
+		self.migrate(name, self.pages()[:3], self.targets)
+		return name
+
+	def sync(self, name: str) -> dict:
+		self.assertEqual(sync_now(name)["status"], "Queued")
+		run_migration(name)
+		return self.items(get_import(name))
+
+	def test_sync_updates_only_the_pages_that_changed(self):
+		name = self.migrated()
+		before = self.items(get_import(name))
+		guide = before["handbook/guide"].article
+		# an agent's edit to an article whose page didn't change stays
+		self.helpdesk.records[ARTICLE][guide]["content"] = "<p>Edited by an agent</p>"
+		self.wiki_pages["handbook/release"] = {"title": "Releases", "rendered_content": "<p>New</p>"}
+		articles = len(self.helpdesk.articles())
+
+		items = self.sync(name)
+
+		self.assertEqual(
+			{route: d.status for route, d in items.items()},
+			{"handbook/debugging": "Unchanged", "handbook/guide": "Unchanged", "handbook/release": "Updated"},
+		)
+		self.assertEqual(self.helpdesk.records[ARTICLE][guide]["content"], "<p>Edited by an agent</p>")
+		release = self.helpdesk.records[ARTICLE][items["handbook/release"].article]
+		self.assertEqual((release["title"], release["content"]), ("Releases", "<p>New</p>"))
+		self.assertEqual(items["handbook/release"].title, "Releases")
+		self.assertEqual(len(self.helpdesk.articles()), articles)
+		self.assertEqual(get_import(name)["counts"]["unchanged"], 2)
+
+	def test_failed_sync_keeps_the_article_and_retry_updates_it(self):
+		name = self.migrated()
+		article = self.items(get_import(name))["handbook/guide"].article
+		self.wiki_pages["handbook/guide"] = 500
+
+		item = self.sync(name)["handbook/guide"]
+
+		self.assertEqual((item.status, item.article), ("Failed", article))
+		self.assertIn(article, self.helpdesk.records[ARTICLE])
+
+		self.wiki_pages["handbook/guide"] = "<p>Guide, revised</p>"
+		retry_failed(name)
+		run_migration(name)
+
+		item = self.items(get_import(name))["handbook/guide"]
+		self.assertEqual((item.status, item.article), ("Updated", article))
+		self.assertEqual(len(self.helpdesk.articles(title="Guide")), 1)
+
+	def test_page_emptied_in_the_wiki_keeps_its_article(self):
+		name = self.migrated()
+		article = self.items(get_import(name))["handbook/guide"].article
+		self.wiki_pages["handbook/guide"] = '<p class="wiki-blank-line"><br></p>'
+		self.sync(name)
+		self.wiki_pages["handbook/guide"] = "<p>Back</p>"
+
+		item = self.sync(name)["handbook/guide"]
+
+		self.assertEqual((item.status, item.article), ("Updated", article))
+		self.assertEqual(len(self.helpdesk.articles(title="Guide")), 1)
+
+	def test_only_a_started_migration_syncs(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Start the migration"):
+			sync_now(self.connect()["name"])
+
+	def test_migrations_kept_in_sync_sync_hourly(self):
+		kept, other = self.migrated(), self.migrated()
+		set_keep_in_sync(kept, True)
+		self.enqueue.reset_mock()
+
+		sync_migrations()
+
+		self.assertEqual([c.kwargs["name"] for c in self.enqueue.call_args_list], [kept])
+		# a migration that is running is left for the next hour
+		with patch(IS_JOB_ENQUEUED, return_value=True):
+			sync_migrations()
+		self.assertEqual(self.enqueue.call_count, 1)
+		self.assertFalse(get_import(other)["keep_in_sync"])

@@ -197,23 +197,9 @@ website_route_rules = [
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"wiki_migrator.tasks.all"
-# 	],
-# 	"daily": [
-# 		"wiki_migrator.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"wiki_migrator.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"wiki_migrator.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"wiki_migrator.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"hourly": ["wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_migration.sync_migrations"],
+}
 
 # Testing
 # -------

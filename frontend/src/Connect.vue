@@ -264,6 +264,7 @@ const hostOf = (url: string) => url?.replace(/^https?:\/\//, "") ?? "";
 const countLabels = {
 	imported: "{0} imported",
 	updated: "{0} updated",
+	unchanged: "{0} unchanged",
 	skipped: "{0} skipped",
 	failed: "{0} failed",
 	pending: "{0} pending",

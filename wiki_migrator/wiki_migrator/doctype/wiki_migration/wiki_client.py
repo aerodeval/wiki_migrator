@@ -91,12 +91,13 @@ class WikiClient:
 			nodes = _index_nodes(parse_index(self.get(f"/{space['route']}/llms.txt").text))
 		return drop_duplicate_routes(nodes)
 
-	def get_page_html(self, route: str) -> str:
+	def get_page(self, route: str) -> dict:
+		"""A published page's `title` and `rendered_content`."""
 		response = self.get(f"/api/method/{PAGE_DATA_METHOD}", params={"route": route}, check=False)
 		if _is_page_not_found(response):
 			frappe.throw(_("The page isn't published in the wiki anymore."))
 		self.check(response)
-		return response.json()["message"].get("rendered_content") or ""
+		return response.json()["message"]
 
 	def download(self, url: str) -> bytes:
 		"""The file at `url`, refused once it grows past the site's upload limit."""
