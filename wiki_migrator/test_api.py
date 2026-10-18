@@ -793,6 +793,35 @@ class TestMigrationJob(MigrationCase):
 		self.assertEqual((item.status, item.article), ("Updated", article))
 		self.assertEqual(len(self.helpdesk.articles(title="Guide")), 1)
 
+	def updated_by_another_migration(self) -> tuple[str, str]:
+		"""A migration that imported the guide, and the guide's article, which a second
+		migration then updated to the page's new version."""
+		pages = self.pages()[2:3]
+		first = self.connect()["name"]
+		self.migrate(first, pages, self.targets)
+		self.wiki_pages["handbook/guide"] = "<p>Guide, revised</p>"
+		item = self.items(self.migrate(self.connect()["name"], pages, self.targets))["handbook/guide"]
+		self.assertEqual(item.status, "Updated")
+		return first, item.article
+
+	def test_sync_compares_with_the_migration_that_last_wrote_the_article(self):
+		first, article = self.updated_by_another_migration()
+		self.helpdesk.records[ARTICLE][article]["content"] = "<p>Edited by an agent</p>"
+
+		self.assertEqual(self.sync(first)["handbook/guide"].status, "Unchanged")
+		self.assertEqual(self.helpdesk.records[ARTICLE][article]["content"], "<p>Edited by an agent</p>")
+
+	def test_failed_sync_never_becomes_the_newer_migration(self):
+		first, article = self.updated_by_another_migration()
+		revised = self.wiki_pages["handbook/guide"]
+		self.wiki_pages["handbook/guide"] = 500
+		self.assertEqual(self.sync(first)["handbook/guide"].status, "Failed")
+		self.wiki_pages["handbook/guide"] = revised
+		self.helpdesk.records[ARTICLE][article]["content"] = "<p>Edited by an agent</p>"
+
+		self.assertEqual(self.sync(first)["handbook/guide"].status, "Unchanged")
+		self.assertEqual(self.helpdesk.records[ARTICLE][article]["content"], "<p>Edited by an agent</p>")
+
 	def test_page_emptied_in_the_wiki_keeps_its_article(self):
 		name = self.migrated()
 		article = self.items(get_import(name))["handbook/guide"].article

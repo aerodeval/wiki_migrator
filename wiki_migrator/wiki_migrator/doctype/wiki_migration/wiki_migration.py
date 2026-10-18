@@ -105,30 +105,36 @@ class WikiMigration(Document):
 		self.enqueue()
 
 	def retry(self):
-		if is_run_active(self.lock_for_run()):
-			frappe.throw(_("This migration is already running."))
-		if not self.can_retry:
-			frappe.throw(_("There are no failed pages to retry."))
-		for d in self.items:
-			if d.status in RETRY_STATUSES:
-				d.update({"status": "Pending", "message": None})
-		self.update({"status": "Queued", "error": None})
-		self.save()
-		self.enqueue()
+		refusal = None if self.can_retry else _("There are no failed pages to retry.")
+		self.rerun(refusal, RETRY_STATUSES)
 
 	def sync(self):
 		"""Run every page again: the articles of the pages that changed in the wiki are
 		updated, the rest are left as they are."""
-		row = self.lock_for_run()
-		if is_run_active(row):
-			frappe.throw(_("This migration is already running."))
-		if row.status == "Draft":
-			frappe.throw(_("Start the migration before syncing it."))
-		for d in self.items:
-			d.update({"status": "Pending", "message": None})
+		# a migration never goes back to Draft, so its loaded status will do
+		refusal = _("Start the migration before syncing it.") if self.status == "Draft" else None
 		# a sync brings the pages imported before up to date
-		self.update({"on_existing": "Update", "status": "Queued", "error": None})
-		self.save()
+		self.rerun(refusal, on_existing="Update")
+
+	def rerun(self, refusal: str | None, statuses: tuple[str, ...] | None = None, **values):
+		"""Queue the items in `statuses` (all when None) again, unless it runs or `refusal` says why not."""
+		if is_run_active(self.lock_for_run()):
+			frappe.throw(_("This migration is already running."))
+		if refusal:
+			frappe.throw(refusal)
+		# not a save: its items' `modified` must stay that of the run that last wrote their article
+		item = DocType("Wiki Migration Item")
+		query = (
+			frappe.qb.update(item)
+			.set(item.status, "Pending")
+			.set(item.message, None)
+			.where(item.parent == self.name)
+		)
+		if statuses:
+			query = query.where(item.status.isin(statuses))
+		query.run()
+		# bumps the migration's `modified`, which ENQUEUE_GRACE counts from
+		self.db_set({"status": "Queued", "error": None, **values})
 		self.enqueue()
 
 	def enqueue(self):
@@ -289,7 +295,10 @@ class WikiMigration(Document):
 				if isinstance(e, JobTimeoutException):
 					# the run stops here, so the item's article is saved now
 					frappe.db.set_value(
-						"Wiki Migration Item", d.name, {"article": d.article, "finished": d.finished}
+						"Wiki Migration Item",
+						d.name,
+						{"article": d.article, "finished": d.finished},
+						update_modified=False,
 					)
 					frappe.db.commit()
 					raise
@@ -297,6 +306,8 @@ class WikiMigration(Document):
 				d.message = "\n".join(filter(None, [get_error_message(e, d.wiki_route), undo_error]))
 			d.category_name, d.parent_category_name = get_category_names(categories, d.category)
 			frappe.clear_messages()
+			# the newest item of a route is the one whose hash its article has, which a
+			# failed page didn't write: it keeps its `modified`
 			frappe.db.set_value(
 				"Wiki Migration Item",
 				d.name,
@@ -314,6 +325,7 @@ class WikiMigration(Document):
 						"content_hash",
 					)
 				},
+				update_modified=d.status != "Failed",
 			)
 			frappe.db.commit()
 
