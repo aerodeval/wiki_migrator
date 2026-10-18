@@ -25,6 +25,8 @@ Install it on its own site. It does not need Helpdesk or Wiki on the same bench:
 
 A re-run of the same wiki and helpdesk updates or skips the pages it imported before. It does not create duplicates.
 
+To bring the articles up to date after the wiki changes, open the run and click **Sync now**, or turn on **Keep in sync** to sync every hour. A sync updates only the articles whose wiki page changed, so edits on the helpdesk stay until the page changes. It does not import pages added to the wiki later. Start a new migration for those.
+
 Limits:
 
 - It needs Frappe Wiki v3 and imports only published pages.
