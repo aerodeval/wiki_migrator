@@ -9,6 +9,11 @@ app_license = "agpl-3.0"
 # bodies instead of form-encoded, per-key JSON-stringified values.
 use_json_request_body = True
 
+# The SPA (frontend/) owns every path under /wiki-migrator.
+website_route_rules = [
+	{"from_route": "/wiki-migrator/<path:app_path>", "to_route": "wiki-migrator"},
+]
+
 # Apps
 # ------------------
 

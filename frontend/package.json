@@ -1,0 +1,23 @@
+{
+  "name": "wiki-migrator-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@vueuse/core": "^14.1.0",
+    "frappe-ui": "1.0.0-rc.1",
+    "vue": "^3.5.14",
+    "vue-router": "^4.2.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.6.2",
+    "postcss": "^8.4.5",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.0.2",
+    "vite": "^5.4.21"
+  }
+}
