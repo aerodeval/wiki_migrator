@@ -103,7 +103,10 @@
           <span
             class="w-40 shrink-0 truncate text-end text-p-sm text-ink-gray-5"
           >
-            {{ item.category_name }}
+            {{
+              item.category_name &&
+              categoryLabel(item.category_name, item.parent_category_name)
+            }}
           </span>
         </li>
       </ul>
@@ -124,7 +127,12 @@ import {
 } from "frappe-ui";
 import { computed, watch } from "vue";
 import AppHeader from "./AppHeader.vue";
-import { __, getErrorMessage, importStatusTheme } from "./utils";
+import {
+  __,
+  categoryLabel,
+  getErrorMessage,
+  importStatusTheme,
+} from "./utils";
 
 type ItemStatus = "Pending" | "Imported" | "Updated" | "Skipped" | "Failed";
 
@@ -137,6 +145,7 @@ interface WikiImportItem {
   article_url: string | null;
   category: string | null;
   category_name: string | null;
+  parent_category_name: string | null;
 }
 
 interface WikiImport {

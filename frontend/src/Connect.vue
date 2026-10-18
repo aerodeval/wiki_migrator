@@ -130,8 +130,13 @@
         >
           <div class="flex min-w-0 flex-1 flex-col">
             <span class="truncate text-base-medium text-ink-gray-8">{{ row.space_title }}</span>
-            <span class="truncate text-p-sm text-ink-gray-5">
-              {{ hostOf(row.wiki_url) }} → {{ hostOf(row.helpdesk_url) }}
+            <span class="flex gap-1 text-p-sm text-ink-gray-5">
+              <span class="truncate">
+                {{ hostOf(row.wiki_url) }} → {{ hostOf(row.helpdesk_url) }}
+              </span>
+              <span v-if="countsSummary(row.counts)" class="shrink-0">
+                · {{ countsSummary(row.counts) }}
+              </span>
             </span>
           </div>
           <Badge
@@ -232,6 +237,22 @@ function openPlan(name: string, spaceId: string) {
 }
 
 const hostOf = (url: string) => url?.replace(/^https?:\/\//, "") ?? "";
+
+const countLabels = {
+  imported: "{0} imported",
+  updated: "{0} updated",
+  skipped: "{0} skipped",
+  failed: "{0} failed",
+  pending: "{0} pending",
+};
+
+// "18 imported · 2 failed": only the counts that aren't zero.
+function countsSummary(counts: Record<keyof typeof countLabels, number>) {
+  return (Object.keys(countLabels) as (keyof typeof countLabels)[])
+    .filter((key) => counts[key])
+    .map((key) => __(countLabels[key], counts[key]))
+    .join(" · ");
+}
 
 usePageMeta(() => ({ title: __("Wiki Migrator") }));
 </script>

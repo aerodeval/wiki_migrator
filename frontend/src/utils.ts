@@ -11,6 +11,10 @@ export function getErrorMessage(error: any, showToast = false) {
   return message;
 }
 
+export function categoryLabel(name: string, parentName?: string | null) {
+  return parentName ? `${parentName} › ${name}` : name;
+}
+
 export const importStatusTheme: Record<string, "gray" | "blue" | "green" | "amber" | "red"> = {
   Draft: "gray",
   Queued: "gray",

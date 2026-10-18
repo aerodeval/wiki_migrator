@@ -243,10 +243,9 @@ import {
   type WikiGroup,
   type WikiNode,
   type WikiRow,
-  categoryLabel,
   useWikiImportPlan,
 } from "./useWikiImportPlan";
-import { __, getErrorMessage } from "./utils";
+import { __, categoryLabel, getErrorMessage } from "./utils";
 
 const props = defineProps<{
   migrationName: string;

@@ -1,4 +1,4 @@
-import { __ } from "./utils";
+import { __, categoryLabel } from "./utils";
 import { computed, reactive, ref, type Ref } from "vue";
 
 export interface ImportedArticle {
@@ -67,10 +67,6 @@ const isGeneral = (name: string) => name.trim().toLowerCase() === "general";
 
 const isGroup = (item: WikiGroup | WikiPage): item is WikiGroup =>
   "items" in item;
-
-export function categoryLabel(name: string, parentName?: string | null) {
-  return parentName ? `${parentName} › ${name}` : name;
-}
 
 export function useWikiImportPlan(
   nodes: WikiNode[],
