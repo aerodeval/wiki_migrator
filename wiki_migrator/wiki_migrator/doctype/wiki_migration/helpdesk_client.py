@@ -28,9 +28,8 @@ class HelpdeskClient:
 
 	def resolve_base_url(self) -> str:
 		"""Check the site runs Frappe, following a redirect to its canonical origin."""
-		# the probe may follow a redirect anywhere, so it carries no key
 		url = self.base_url + "/api/method/ping"
-		response = send(self.session, "GET", url, self.base_url, auth=None, probe=True)
+		response = send(self.session, "GET", url, self.base_url, self.auth, probe=True)
 		if not response.ok or _get_json(response).get("message") != "pong":
 			frappe.throw(_("{0} is not a Frappe site.").format(self.base_url))
 		self.base_url = get_origin(response.url)
