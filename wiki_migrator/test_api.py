@@ -517,7 +517,15 @@ class TestMigrationJob(MigrationCase):
 		self.assertEqual(result["status"], "Completed with Errors")
 		self.assertEqual(
 			result["counts"],
-			{"total": 6, "imported": 4, "updated": 0, "unchanged": 0, "skipped": 1, "failed": 1, "pending": 0},
+			{
+				"total": 6,
+				"imported": 4,
+				"updated": 0,
+				"unchanged": 0,
+				"skipped": 1,
+				"failed": 1,
+				"pending": 0,
+			},
 		)
 		self.assertEqual(items["handbook/blank"].message, "The page is empty in the wiki")
 		self.assertIn("500", items["handbook/broken"].message)
