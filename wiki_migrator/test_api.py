@@ -830,6 +830,15 @@ class TestMigrationJob(MigrationCase):
 		self.assertEqual(self.sync(first)["handbook/guide"].status, "Unchanged")
 		self.assertEqual(self.helpdesk.records[ARTICLE][article]["content"], "<p>Edited by an agent</p>")
 
+	def test_saving_a_migration_never_makes_it_the_newer_migration(self):
+		first, article = self.updated_by_another_migration()
+		self.helpdesk.records[ARTICLE][article]["content"] = "<p>Edited by an agent</p>"
+		# as a save in Desk does
+		frappe.get_doc("Wiki Migration", first).save()
+
+		self.assertEqual(self.sync(first)["handbook/guide"].status, "Unchanged")
+		self.assertEqual(self.helpdesk.records[ARTICLE][article]["content"], "<p>Edited by an agent</p>")
+
 	def test_page_emptied_in_the_wiki_keeps_its_article(self):
 		name = self.migrated()
 		article = self.items(get_import(name))["handbook/guide"].article

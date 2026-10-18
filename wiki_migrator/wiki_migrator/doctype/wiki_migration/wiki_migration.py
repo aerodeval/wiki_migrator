@@ -124,7 +124,7 @@ class WikiMigration(Document):
 			frappe.throw(_("This migration is already running."))
 		if refusal:
 			frappe.throw(refusal)
-		# not a save: its items' `modified` must stay that of the run that last wrote their article
+		# not a save, which would write the loaded items back over what a run wrote since
 		item = DocType("Wiki Migration Item")
 		query = (
 			frappe.qb.update(item)
@@ -300,7 +300,6 @@ class WikiMigration(Document):
 						"Wiki Migration Item",
 						d.name,
 						{"article": d.article, "finished": d.finished},
-						update_modified=False,
 					)
 					frappe.db.commit()
 					raise
@@ -308,27 +307,25 @@ class WikiMigration(Document):
 				d.message = "\n".join(filter(None, [get_error_message(e, d.wiki_route), undo_error]))
 			d.category_name, d.parent_category_name = get_category_names(categories, d.category)
 			frappe.clear_messages()
-			# the newest item of a route is the one whose hash its article has, which a
-			# failed page didn't write: it keeps its `modified`
-			frappe.db.set_value(
-				"Wiki Migration Item",
-				d.name,
-				{
-					field: d.get(field)
-					for field in (
-						"title",
-						"status",
-						"message",
-						"article",
-						"category",
-						"category_name",
-						"parent_category_name",
-						"finished",
-						"content_hash",
-					)
-				},
-				update_modified=d.status != "Failed",
-			)
+			values = {
+				field: d.get(field)
+				for field in (
+					"title",
+					"status",
+					"message",
+					"article",
+					"category",
+					"category_name",
+					"parent_category_name",
+					"finished",
+					"content_hash",
+				)
+			}
+			# a route's newest synced_on is the run that last wrote or checked its article,
+			# so its hash is the one that article has; a failed page did neither
+			if d.article and d.status != "Failed":
+				values["synced_on"] = now_datetime()
+			frappe.db.set_value("Wiki Migration Item", d.name, values)
 			frappe.db.commit()
 
 	def import_page(
@@ -380,7 +377,9 @@ class WikiMigration(Document):
 			# delete a category's last article, which undoing a failed page would be
 			created.article = helpdesk.insert(ARTICLE, {"title": title, "status": "Draft"})
 			# recorded at once, so a run stopped before the page is done finds it again
-			frappe.db.set_value("Wiki Migration Item", d.name, "article", created.article)
+			frappe.db.set_value(
+				"Wiki Migration Item", d.name, {"article": created.article, "synced_on": now_datetime()}
+			)
 			frappe.db.commit()
 		article = existing.article if finished else created.article
 		warnings = self.copy_assets(wiki, helpdesk, page, article, bool(existing), created.files)
@@ -464,8 +463,8 @@ class WikiMigration(Document):
 		self, helpdesk: HelpdeskClient, categories: dict[str, dict]
 	) -> dict[str, frappe._dict]:
 		"""The article each page of this wiki was last migrated to on this helpdesk,
-		when it's still there. One whose page never finished is not `finished`; `content_hash`
-		is of the page as its article last took it."""
+		when it's still there, from the item with the newest `synced_on`. One whose page never
+		finished is not `finished`; `content_hash` is of the page as its article last took it."""
 		item = DocType("Wiki Migration Item")
 		migration = DocType("Wiki Migration")
 		rows = (
@@ -476,7 +475,8 @@ class WikiMigration(Document):
 			.where(migration.wiki_url == self.wiki_url)
 			.where(migration.helpdesk_url == self.helpdesk_url)
 			.where(item.article.isnotnull() & (item.article != ""))
-			.orderby(item.modified, order=Order.desc)
+			.where(item.synced_on.isnotnull())
+			.orderby(item.synced_on, order=Order.desc)
 			.run(as_dict=True)
 		)
 		articles = {
