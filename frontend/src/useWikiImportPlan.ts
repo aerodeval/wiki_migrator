@@ -1,7 +1,7 @@
 import { __, categoryLabel } from "./utils";
 import { computed, reactive, ref, type Ref } from "vue";
 
-export interface ImportedArticle {
+interface ImportedArticle {
   article: string;
   title: string;
   category: string;
