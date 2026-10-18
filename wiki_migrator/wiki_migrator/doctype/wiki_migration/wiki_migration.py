@@ -9,6 +9,7 @@ from frappe import _
 from frappe.core.doctype.file.utils import get_content_hash
 from frappe.model.document import Document
 from frappe.query_builder import DocType, Order
+from frappe.utils import now_datetime, time_diff_in_seconds
 from frappe.utils.background_jobs import is_job_enqueued
 from rq.timeouts import JobTimeoutException
 
@@ -28,6 +29,8 @@ NAME_LENGTH = 140
 JOB_TIMEOUT = 4 * 60 * 60
 ACTIVE_STATUSES = ("Queued", "Running")
 RETRY_STATUSES = ("Failed", "Pending")
+# enqueue_after_commit adds a start's job only after its commit; until then it's this new
+ENQUEUE_GRACE = 10
 # chosen per run in the planner, which holds their defaults
 OPTIONS = ("article_status", "visibility", "on_existing")
 
@@ -35,7 +38,7 @@ OPTIONS = ("article_status", "visibility", "on_existing")
 class WikiMigration(Document):
 	@property
 	def job_id(self) -> str:
-		return f"wiki-migration-{self.name}"
+		return get_job_id(self.name)
 
 	def get_wiki_client(self) -> WikiClient:
 		secret = self.get_password("wiki_api_secret", raise_exception=False) if self.wiki_api_key else None
@@ -53,11 +56,11 @@ class WikiMigration(Document):
 	@property
 	def is_stale(self) -> bool:
 		"""Queued or running on paper, but the worker that had the job is gone."""
-		return self.status in ACTIVE_STATUSES and not is_job_enqueued(self.job_id)
+		return self.status in ACTIVE_STATUSES and not self.is_running
 
 	@property
 	def is_running(self) -> bool:
-		return self.status in ACTIVE_STATUSES and not self.is_stale
+		return is_run_active(self)
 
 	@property
 	def can_retry(self) -> bool:
@@ -72,11 +75,8 @@ class WikiMigration(Document):
 	def start(self, plan: dict):
 		# read before the lock, so no row stays locked on a network call
 		categories = self.get_categories(self.get_helpdesk_client())
-		# locks this pair's rows, this one too, so a second tab starting the same draft
-		# waits and then sees it started
-		self.validate_no_other_run()
-		status = frappe.db.get_value("Wiki Migration", self.name, "status")
-		if status != "Draft":
+		# a second tab starting the same draft waits for the lock, then sees it started
+		if self.lock_for_run().status != "Draft":
 			frappe.throw(_("This migration has already started."))
 		self.validate_plan(plan, categories)
 		self.update(
@@ -105,11 +105,10 @@ class WikiMigration(Document):
 		self.enqueue()
 
 	def retry(self):
-		if self.is_running:
+		if is_run_active(self.lock_for_run()):
 			frappe.throw(_("This migration is already running."))
 		if not self.can_retry:
 			frappe.throw(_("There are no failed pages to retry."))
-		self.validate_no_other_run()
 		for d in self.items:
 			if d.status in RETRY_STATUSES:
 				d.update({"status": "Pending", "message": None})
@@ -128,23 +127,24 @@ class WikiMigration(Document):
 			name=self.name,
 		)
 
-	def validate_no_other_run(self):
-		"""Two runs between the same sites would each import the pages the other hasn't yet.
-		The pair's rows stay locked, so two starts check one after the other."""
+	def lock_for_run(self) -> frappe._dict:
+		"""Lock this pair's migrations and refuse while another one runs: two runs between
+		the same sites would each import the pages the other hasn't yet. This migration's
+		row as the lock read it, which only a locking read sees up to date."""
 		migration = DocType("Wiki Migration")
 		rows = (
 			frappe.qb.from_(migration)
-			.select(migration.name, migration.status)
+			.select(migration.name, migration.status, migration.modified)
 			.where(migration.wiki_url == self.wiki_url)
 			.where(migration.helpdesk_url == self.helpdesk_url)
 			.for_update()
 			.run(as_dict=True)
 		)
-		others = [d.name for d in rows if d.name != self.name and d.status in ACTIVE_STATUSES]
-		if any(frappe.get_doc("Wiki Migration", name).is_running for name in others):
+		if any(d.name != self.name and is_run_active(d) for d in rows):
 			frappe.throw(
 				_("Another migration from this wiki to this helpdesk is running. Try again when it's done.")
 			)
+		return next(d for d in rows if d.name == self.name)
 
 	def validate_plan(self, plan: dict, categories: dict[str, dict]):
 		pages = plan.get("pages") or []
@@ -439,6 +439,22 @@ class WikiMigration(Document):
 				finished=row.status not in RETRY_STATUSES,
 			)
 		return imported
+
+
+def get_job_id(name: str) -> str:
+	return f"wiki-migration-{name}"
+
+
+def is_run_active(migration) -> bool:
+	"""Whether a migration (or its row) runs: its job is there, or it was queued too
+	recently for the job to show yet."""
+	if migration.status not in ACTIVE_STATUSES:
+		return False
+	just_queued = (
+		migration.status == "Queued"
+		and time_diff_in_seconds(now_datetime(), migration.modified) < ENQUEUE_GRACE
+	)
+	return just_queued or is_job_enqueued(get_job_id(migration.name))
 
 
 def run_migration(name: str):

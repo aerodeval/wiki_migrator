@@ -6,6 +6,7 @@ import frappe
 import requests
 from frappe.core.doctype.file.utils import get_content_hash
 from frappe.tests import IntegrationTestCase
+from frappe.utils import add_to_date, now_datetime
 from rq.timeouts import JobTimeoutException
 
 from wiki_migrator.api import (
@@ -215,6 +216,9 @@ def simulate_commits(case) -> None:
 	savepoint and a rollback returns to it, and the test's transaction rolls back at
 	the end as usual."""
 	savepoint, rollback = frappe.db.savepoint, frappe.db.rollback
+	# the test's own changes go at its end, so one test's runs never block the next
+	savepoint("wiki_migrator_test")
+	case.addCleanup(rollback, save_point="wiki_migrator_test")
 	savepoint("wiki_migrator_test_commit")
 	case.enterContext(
 		patch.object(
@@ -413,9 +417,13 @@ class TestPlanValidation(MigrationCase):
 
 	def test_only_a_draft_can_start(self):
 		plan = self.plan({"t": {"name": "A"}}, [self.page])
+		other_tab = frappe.get_doc("Wiki Migration", self.name)
 		start_import(self.name, plan)
 		with self.assertRaisesRegex(frappe.ValidationError, "already started"):
 			start_import(self.name, plan)
+		# a copy read before the start goes by the locked row, not its own status
+		with self.assertRaisesRegex(frappe.ValidationError, "already started"):
+			other_tab.start(plan)
 		self.enqueue.assert_called_once()
 
 
@@ -686,14 +694,20 @@ class TestMigrationJob(MigrationCase):
 
 	def test_only_one_run_between_two_sites_at_a_time(self):
 		plan = self.plan(self.targets, self.pages())
-		start_import(self.connect()["name"], plan)
+		first = self.connect()["name"]
+		start_import(first, plan)
 		second = self.connect()["name"]
 
 		with patch(IS_JOB_ENQUEUED, return_value=True):
 			with self.assertRaisesRegex(frappe.ValidationError, "Another migration"):
 				start_import(second, plan)
-		# the first run's worker is gone, so it no longer blocks
 		with patch(IS_JOB_ENQUEUED, return_value=False):
+			# just queued: its job is added after the commit, so it runs all the same
+			with self.assertRaisesRegex(frappe.ValidationError, "Another migration"):
+				start_import(second, plan)
+			# queued a while ago with no job: its worker is gone, so it no longer blocks
+			queued_at = add_to_date(now_datetime(), minutes=-1)
+			frappe.db.set_value("Wiki Migration", first, "modified", queued_at, update_modified=False)
 			self.assertEqual(start_import(second, plan)["status"], "Queued")
 
 	def test_unreachable_wiki_fails_the_whole_run(self):
