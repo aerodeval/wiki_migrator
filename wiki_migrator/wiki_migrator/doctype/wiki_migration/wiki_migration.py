@@ -28,6 +28,8 @@ NAME_LENGTH = 140
 JOB_TIMEOUT = 4 * 60 * 60
 ACTIVE_STATUSES = ("Queued", "Running")
 RETRY_STATUSES = ("Failed", "Pending")
+# chosen per run in the planner, which holds their defaults
+OPTIONS = ("article_status", "visibility", "on_existing")
 
 
 class WikiMigration(Document):
@@ -78,10 +80,10 @@ class WikiMigration(Document):
 		self.validate_plan(plan, categories)
 		self.update(
 			{
-				"plan": frappe.as_json(plan),
-				"article_status": plan.get("article_status") or self.article_status,
-				"visibility": plan.get("visibility") or self.visibility,
-				"on_existing": plan.get("on_existing") or self.on_existing,
+				"targets": frappe.as_json(plan["targets"]),
+				"article_status": plan["article_status"],
+				"visibility": plan["visibility"],
+				"on_existing": plan["on_existing"],
 				"status": "Queued",
 				"error": None,
 			}
@@ -157,6 +159,12 @@ class WikiMigration(Document):
 				frappe.throw(_("Pick a category for {0}.").format(d.get("title") or d.get("route")))
 		for target in targets.values():
 			self.validate_target(target, targets, categories)
+		for field in OPTIONS:
+			options = self.meta.get_options(field).split("\n")
+			if plan.get(field) not in options:
+				frappe.throw(
+					_("{0} must be one of {1}.").format(_(self.meta.get_label(field)), ", ".join(options))
+				)
 
 	def validate_target(self, target: dict, targets: dict, categories: dict):
 		if target.get("category"):
@@ -217,7 +225,7 @@ class WikiMigration(Document):
 
 	def create_categories(self, helpdesk: HelpdeskClient, categories: dict[str, dict]) -> dict[str, str]:
 		"""Each plan target's category, made when the helpdesk doesn't have it yet."""
-		targets = frappe.parse_json(self.plan)["targets"]
+		targets = frappe.parse_json(self.targets)
 		target_categories = {}
 		# parents first: their subcategories link to them
 		for key, target in sorted(targets.items(), key=lambda row: bool(row[1].get("parent"))):

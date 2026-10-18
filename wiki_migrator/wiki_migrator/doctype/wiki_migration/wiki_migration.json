@@ -26,7 +26,7 @@
   "section_break_items",
   "items",
   "error",
-  "plan"
+  "targets"
  ],
  "fields": [
   {
@@ -118,15 +118,13 @@
    "fieldname": "article_status",
    "fieldtype": "Select",
    "label": "Article status",
-   "options": "Published\nDraft",
-   "default": "Published"
+   "options": "Published\nDraft"
   },
   {
    "fieldname": "visibility",
    "fieldtype": "Select",
    "label": "Visibility",
-   "options": "Public\nCustomers\nPrivate",
-   "default": "Public"
+   "options": "Public\nCustomers\nPrivate"
   },
   {
    "fieldname": "column_break_options",
@@ -136,8 +134,7 @@
    "fieldname": "on_existing",
    "fieldtype": "Select",
    "label": "On existing",
-   "options": "Update\nSkip",
-   "default": "Update"
+   "options": "Update\nSkip"
   },
   {
    "fieldname": "section_break_items",
@@ -158,15 +155,15 @@
    "read_only": 1
   },
   {
-   "fieldname": "plan",
+   "fieldname": "targets",
    "fieldtype": "JSON",
-   "label": "Plan",
+   "label": "Targets",
    "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-17 20:00:00.000000",
+ "modified": "2026-10-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Wiki Migrator",
  "name": "Wiki Migration",

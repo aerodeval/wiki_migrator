@@ -244,8 +244,8 @@ class MigrationCase(IntegrationTestCase):
 		credentials = {"helpdesk_api_key": "hd-key", "helpdesk_api_secret": "hd-secret"}
 		return connect(url, HELPDESK_URL, **{**credentials, **kwargs})
 
-	def migrate(self, name: str, pages: list[dict], targets: dict, **options) -> dict:
-		plan = {
+	def plan(self, targets: dict, pages: list[dict], **options) -> dict:
+		return {
 			"article_status": "Published",
 			"visibility": "Public",
 			"on_existing": "Update",
@@ -253,7 +253,9 @@ class MigrationCase(IntegrationTestCase):
 			"targets": targets,
 			"pages": pages,
 		}
-		start_import(name, plan)
+
+	def migrate(self, name: str, pages: list[dict], targets: dict, **options) -> dict:
+		start_import(name, self.plan(targets, pages, **options))
 		run_migration(name)
 		return get_import(name)
 
@@ -352,7 +354,7 @@ class TestPlanValidation(MigrationCase):
 		self.page = {"route": "handbook/debugging", "title": "Debugging", "target": "t"}
 
 	def assert_rejected(self, message: str, targets: dict, pages: list | None = None):
-		plan = {"targets": targets, "pages": [self.page] if pages is None else pages}
+		plan = self.plan(targets, [self.page] if pages is None else pages)
 		with self.assertRaisesRegex(frappe.ValidationError, message):
 			start_import(self.name, plan)
 		self.enqueue.assert_not_called()
@@ -363,6 +365,13 @@ class TestPlanValidation(MigrationCase):
 		self.assert_rejected("needs a name", {"t": {"name": "  "}})
 		self.assert_rejected("at most 140", {"t": {"name": "x" * 141}})
 		self.assert_rejected("not found", {"t": {"category": "no-such-category"}})
+
+	def test_plan_needs_every_option(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Visibility must be one of Public, Customers"):
+			start_import(self.name, {**self.plan({"t": {"name": "A"}}, [self.page]), "visibility": None})
+		with self.assertRaisesRegex(frappe.ValidationError, "On existing must be one of Update, Skip"):
+			start_import(self.name, self.plan({"t": {"name": "A"}}, [self.page], on_existing="Replace"))
+		self.enqueue.assert_not_called()
 
 	def test_categories_go_one_level_deep(self):
 		parent = self.helpdesk.insert(CATEGORY, {"category_name": "Parent"})
@@ -398,12 +407,12 @@ class TestPlanValidation(MigrationCase):
 		# public-mode group keys carry their whole title path
 		key = "group:" + "/".join(["A long group title"] * 20)
 
-		start_import(self.name, {"targets": {key: {"name": "A"}}, "pages": [{**self.page, "target": key}]})
+		start_import(self.name, self.plan({key: {"name": "A"}}, [{**self.page, "target": key}]))
 
 		self.assertEqual(frappe.get_doc("Wiki Migration", self.name).items[0].target, key)
 
 	def test_only_a_draft_can_start(self):
-		plan = {"targets": {"t": {"name": "A"}}, "pages": [self.page]}
+		plan = self.plan({"t": {"name": "A"}}, [self.page])
 		start_import(self.name, plan)
 		with self.assertRaisesRegex(frappe.ValidationError, "already started"):
 			start_import(self.name, plan)
@@ -424,10 +433,7 @@ class TestFlatHelpdesk(MigrationCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "doesn't support subcategories"):
 			start_import(
 				connection["name"],
-				{
-					"targets": {"top": {"name": "Top"}, "t": {"name": "Sub", "parent": "top"}},
-					"pages": [page],
-				},
+				self.plan({"top": {"name": "Top"}, "t": {"name": "Sub", "parent": "top"}}, [page]),
 			)
 
 		result = self.migrate(connection["name"], [page], {"t": {"name": "Engineering"}})
@@ -645,7 +651,7 @@ class TestMigrationJob(MigrationCase):
 		self.assertEqual([d["name"] for d in self.helpdesk.articles(title="Debugging")], [item["article"]])
 
 	def test_only_one_run_between_two_sites_at_a_time(self):
-		plan = {"targets": self.targets, "pages": self.pages()}
+		plan = self.plan(self.targets, self.pages())
 		start_import(self.connect()["name"], plan)
 		second = self.connect()["name"]
 
@@ -668,7 +674,7 @@ class TestMigrationJob(MigrationCase):
 
 	def test_stale_run_reports_itself_and_retries(self):
 		name = self.connect()["name"]
-		start_import(name, {"targets": self.targets, "pages": self.pages()})
+		start_import(name, self.plan(self.targets, self.pages()))
 		frappe.db.set_value("Wiki Migration", name, "status", "Running")
 
 		with patch(IS_JOB_ENQUEUED, return_value=True):
