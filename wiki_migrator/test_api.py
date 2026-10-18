@@ -384,6 +384,14 @@ class TestPlanValidation(MigrationCase):
 			},
 		)
 
+	def test_deeply_nested_group_keys_fit(self):
+		# public-mode group keys carry their whole title path
+		key = "group:" + "/".join(["A long group title"] * 20)
+
+		start_import(self.name, {"targets": {key: {"name": "A"}}, "pages": [{**self.page, "target": key}]})
+
+		self.assertEqual(frappe.get_doc("Wiki Migration", self.name).items[0].target, key)
+
 	def test_only_a_draft_can_start(self):
 		plan = {"targets": {"t": {"name": "A"}}, "pages": [self.page]}
 		start_import(self.name, plan)
