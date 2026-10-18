@@ -175,7 +175,6 @@ class WikiMigration(Document):
 			frappe.throw(_("General can't have subcategories."))
 
 	def run(self):
-		self.created_categories = []
 		self.db_set({"status": "Running", "error": None}, commit=True)
 		try:
 			self.migrate()
@@ -189,54 +188,61 @@ class WikiMigration(Document):
 		wiki, helpdesk = self.get_wiki_client(), self.get_helpdesk_client()
 		# a site that can't be reached fails the run, not each page in turn
 		wiki.resolve_base_url()
-		self.categories = self.get_categories(helpdesk)
-		targets = self.create_categories(helpdesk)
-		self.import_items(wiki, helpdesk, targets)
-		self.link_imported_articles(helpdesk)
-		self.delete_empty_categories(helpdesk)
+		categories = self.get_categories(helpdesk)
+		targets = self.create_categories(helpdesk, categories)
+		self.import_items(wiki, helpdesk, targets, categories)
+		self.link_imported_articles(helpdesk, categories)
+		self.delete_empty_categories(helpdesk, categories)
 		failed = any(d.status == "Failed" for d in self.items)
 		self.db_set("status", "Completed with Errors" if failed else "Completed")
 
-	def create_categories(self, helpdesk: HelpdeskClient) -> dict[str, str]:
+	def create_categories(self, helpdesk: HelpdeskClient, categories: dict[str, dict]) -> dict[str, str]:
 		"""Each plan target's category, made when the helpdesk doesn't have it yet."""
 		targets = frappe.parse_json(self.plan)["targets"]
-		categories = {}
+		target_categories = {}
 		# parents first: their subcategories link to them
 		for key, target in sorted(targets.items(), key=lambda row: bool(row[1].get("parent"))):
-			categories[key] = target.get("category") or self.get_category(
-				helpdesk, target["name"].strip(), categories.get(target.get("parent"))
+			target_categories[key] = target.get("category") or self.get_category(
+				helpdesk, categories, target["name"].strip(), target_categories.get(target.get("parent"))
 			)
-		return categories
+		return target_categories
 
-	def get_category(self, helpdesk: HelpdeskClient, category_name: str, parent: str | None) -> str:
-		"""The category named so under `parent`; a top-level General is the helpdesk's own."""
-		for name, d in self.categories.items():
+	def get_category(
+		self, helpdesk: HelpdeskClient, categories: dict[str, dict], category_name: str, parent: str | None
+	) -> str:
+		"""The category named so under `parent`; a top-level General is the helpdesk's own.
+		One it makes is marked `created`, so it's deleted again if no page lands in it."""
+		for name, d in categories.items():
 			if (d["category_name"] or "").lower() == category_name.lower() and d["parent_category"] == parent:
 				return name
 		values = {"category_name": category_name}
 		if parent:
 			values["parent_category"] = parent
 		name = helpdesk.insert(CATEGORY, values)
-		self.categories[name] = {"name": name, "parent_category": parent, **values}
-		self.created_categories.append(name)
+		categories[name] = {"name": name, "parent_category": parent, "created": True, **values}
 		return name
 
-	def import_items(self, wiki: WikiClient, helpdesk: HelpdeskClient, targets: dict[str, str]):
-		imported = self.get_imported_articles(helpdesk, self.categories)
+	def import_items(
+		self, wiki: WikiClient, helpdesk: HelpdeskClient, targets: dict[str, str], categories: dict[str, dict]
+	):
+		imported = self.get_imported_articles(helpdesk, categories)
 		for d in self.items:
 			if d.status != "Pending":
 				continue
-			self.new_article, self.new_files = None, []
+			# what the page makes on the helpdesk, deleted again if it fails
+			created = frappe._dict(article=None, files=[])
 			try:
-				d.status, d.message = self.import_page(wiki, helpdesk, d, targets[d.target], imported)
+				d.status, d.message = self.import_page(
+					wiki, helpdesk, d, targets[d.target], imported, created
+				)
 			except JobTimeoutException:
-				self.undo_page(helpdesk)
+				self.undo_page(helpdesk, created)
 				raise
 			except Exception as e:
 				message = get_error_message(e, d.wiki_route)
-				d.status, d.message = "Failed", message + self.undo_page(helpdesk)
+				d.status, d.message = "Failed", message + self.undo_page(helpdesk, created)
 				d.article = d.category = None
-			d.category_name, d.parent_category_name = get_category_names(self.categories, d.category)
+			d.category_name, d.parent_category_name = get_category_names(categories, d.category)
 			frappe.clear_messages()
 			frappe.db.set_value(
 				"Wiki Migration Item",
@@ -262,6 +268,7 @@ class WikiMigration(Document):
 		d,
 		category: str,
 		imported: dict,
+		created: frappe._dict,
 	) -> tuple:
 		"""Copy one wiki page into an article; the item's new status and message."""
 		d.article = d.category = None
@@ -278,8 +285,8 @@ class WikiMigration(Document):
 		else:
 			# a draft without a category until it's complete: the helpdesk refuses to
 			# delete a category's last article, which undoing a failed page would be
-			article = self.new_article = helpdesk.insert(ARTICLE, {"title": title, "status": "Draft"})
-		warnings = self.copy_assets(wiki, helpdesk, page, article, bool(existing))
+			article = created.article = helpdesk.insert(ARTICLE, {"title": title, "status": "Draft"})
+		warnings = self.copy_assets(wiki, helpdesk, page, article, bool(existing), created.files)
 		values = {"title": title, "content": page.html}
 		if not existing:
 			values.update(category=category, status=self.article_status, visibility=self.visibility)
@@ -294,6 +301,7 @@ class WikiMigration(Document):
 		page: WikiPage,
 		article: str,
 		existing: bool,
+		new_files: list[str],
 	) -> list[str]:
 		"""Copy the wiki files a page uses onto its article; a warning for each that failed."""
 		# a re-import brings the same files again; the article keeps one copy of each
@@ -304,7 +312,9 @@ class WikiMigration(Document):
 				content = wiki.download(url)
 				content_hash = get_content_hash(content)
 				if content_hash not in file_urls:
-					file_urls[content_hash] = self.upload_file(helpdesk, article, url, content)
+					file = self.upload_file(helpdesk, article, url, content)
+					new_files.append(file["name"])
+					file_urls[content_hash] = file["file_url"]
 				urls[url] = file_urls[content_hash]
 			# a stream can break midway, past the client's own error handling
 			except (frappe.ValidationError, requests.RequestException) as e:
@@ -312,29 +322,26 @@ class WikiMigration(Document):
 		page.replace_urls(urls)
 		return warnings
 
-	def upload_file(self, helpdesk: HelpdeskClient, article: str, url: str, content: bytes) -> str:
+	def upload_file(self, helpdesk: HelpdeskClient, article: str, url: str, content: bytes) -> dict:
 		file_name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
-		file = helpdesk.upload_file(article, file_name, content)
-		self.new_files.append(file["name"])
-		return file["file_url"]
+		return helpdesk.upload_file(article, file_name, content)
 
-	def undo_page(self, helpdesk: HelpdeskClient) -> str:
+	def undo_page(self, helpdesk: HelpdeskClient, created: frappe._dict) -> str:
 		"""The helpdesk can't roll back, so what a failed page made there is deleted.
 		A note for the item's message when even that fails."""
 		try:
-			for file in self.new_files:
+			for file in created.files:
 				helpdesk.delete("File", file)
-			if self.new_article:
-				helpdesk.delete(ARTICLE, self.new_article)
+			if created.article:
+				helpdesk.delete(ARTICLE, created.article)
 		except frappe.ValidationError as e:
 			return "\n" + _("Couldn't remove what it made on the helpdesk: {0}").format(e)
 		return ""
 
-	def link_imported_articles(self, helpdesk: HelpdeskClient):
+	def link_imported_articles(self, helpdesk: HelpdeskClient, categories: dict[str, dict]):
 		"""Point links between pages of the wiki at their articles, now that they all exist."""
-		routes = {
-			route: row.article for route, row in self.get_imported_articles(helpdesk, self.categories).items()
-		}
+		imported = self.get_imported_articles(helpdesk, categories)
+		routes = {route: row.article for route, row in imported.items()}
 		articles = helpdesk.get_articles(
 			list(routes.values()),
 			["name", "content"],
@@ -344,14 +351,14 @@ class WikiMigration(Document):
 			if content := rewrite_wiki_links(article["content"], routes):
 				helpdesk.update(ARTICLE, article["name"], {"content": content})
 
-	def delete_empty_categories(self, helpdesk: HelpdeskClient):
+	def delete_empty_categories(self, helpdesk: HelpdeskClient, categories: dict[str, dict]):
 		# subcategories were made after their parents, so they go first
-		for category in reversed(self.created_categories):
-			has_subcategories = any(d["parent_category"] == category for d in self.categories.values())
+		for category in reversed([name for name, d in categories.items() if d.get("created")]):
+			has_subcategories = any(d["parent_category"] == category for d in categories.values())
 			if has_subcategories or helpdesk.has_articles(category):
 				continue
 			helpdesk.delete(CATEGORY, category)
-			del self.categories[category]
+			del categories[category]
 
 	def get_imported_articles(
 		self, helpdesk: HelpdeskClient, categories: dict[str, dict]
