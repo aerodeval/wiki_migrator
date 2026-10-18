@@ -10,6 +10,36 @@ You can install this app using the [bench](https://github.com/frappe/bench) CLI:
 cd $PATH_TO_YOUR_BENCH
 bench get-app $URL_OF_THIS_REPO --branch develop
 bench install-app wiki_migrator
+bench build --app wiki_migrator
+```
+
+Install it on its own site. It does not need Helpdesk or Wiki on the same bench: it talks to both over REST.
+
+### Usage
+
+1. Open `/wiki-migrator` as a System Manager.
+2. Enter the wiki URL. For a private wiki, add the API key and secret of a wiki user who can read the spaces.
+3. Enter the helpdesk URL, API key and secret. Generate the key on the helpdesk under User → API Access → Generate Keys. The user needs the Agent Manager role.
+4. Choose a space. In the planner, select the pages and choose a category for each wiki group: a new category, an existing category, or, when the helpdesk supports subcategories, a subcategory.
+5. Start the import. It runs as a background job, so the site needs a running worker. Pages that fail can be retried from the run page.
+
+A re-run of the same wiki and helpdesk updates or skips the pages it imported before. It does not create duplicates.
+
+Limits:
+
+- It needs Frappe Wiki v3 and imports only published pages.
+- Embedded videos become links, because Helpdesk removes iframes from articles.
+- A public wiki does not let it copy files under `/private/files`. These stay as links to the wiki and the run shows a warning.
+
+On macOS, start the worker with `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES bench worker`. Otherwise jobs that make HTTPS requests crash.
+
+### Development
+
+```bash
+cd apps/wiki_migrator
+yarn install
+yarn dev    # Vite dev server for frontend/
+yarn build  # builds into wiki_migrator/public/frontend
 ```
 
 ### Contributing
