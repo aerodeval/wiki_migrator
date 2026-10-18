@@ -39,7 +39,6 @@ MIGRATION_FIELDS = [
 	"article_status",
 	"visibility",
 	"on_existing",
-	"keep_in_sync",
 ]
 COUNTED_STATUSES = {
 	"imported": "Imported",
