@@ -619,11 +619,7 @@ class TestMigrationJob(MigrationCase):
 
 	def test_retry_after_a_stopped_worker_finishes_the_same_article(self):
 		name = self.connect()["name"]
-		# the worker dies after the article is made, before the page is done
-		with patch.object(WikiMigration, "copy_assets", side_effect=SystemExit):
-			with self.assertRaises(SystemExit):
-				self.migrate(name, self.pages()[:1], self.targets)
-		(article,) = self.helpdesk.articles(title="Debugging")
+		article = self.stop_worker_after_article(name, self.pages()[:1])
 		self.assertEqual(get_import(name)["items"][0]["article"], article["name"])
 
 		with patch(IS_JOB_ENQUEUED, return_value=False):
@@ -634,6 +630,44 @@ class TestMigrationJob(MigrationCase):
 		self.assertEqual((item["status"], item["article"]), ("Imported", article["name"]))
 		self.assertEqual(len(self.helpdesk.articles(title="Debugging")), 1)
 		self.assertEqual(article["category"], self.helpdesk.category("Backend")["name"])
+
+	def stop_worker_after_article(self, name: str, pages: list[dict]) -> dict:
+		"""Run `name` until its first page's article is made, then kill the worker."""
+		with patch.object(WikiMigration, "copy_assets", side_effect=SystemExit):
+			with self.assertRaises(SystemExit):
+				self.migrate(name, pages, self.targets)
+		return self.helpdesk.articles(title=pages[0]["title"])[0]
+
+	def test_unfinished_article_is_never_a_link_target(self):
+		self.stop_worker_after_article(self.connect()["name"], self.pages()[:1])
+
+		with patch(IS_JOB_ENQUEUED, return_value=False):
+			self.migrate(self.connect()["name"], self.pages()[1:2], self.targets)
+
+		(release,) = self.helpdesk.articles(title="Release")
+		self.assertIn(f'href="{WIKI_URL}/handbook/debugging"', release["content"])
+
+	def test_page_emptied_after_a_stopped_run_removes_its_draft(self):
+		name = self.connect()["name"]
+		article = self.stop_worker_after_article(name, self.pages()[:1])
+		self.wiki_pages["handbook/debugging"] = '<p class="wiki-blank-line"><br></p>'
+
+		# while the helpdesk won't delete it, the page fails and keeps the draft
+		self.helpdesk.rejects[("DELETE", ARTICLE)] = "Locked"
+		with patch(IS_JOB_ENQUEUED, return_value=False):
+			retry_failed(name)
+		run_migration(name)
+		item = get_import(name)["items"][0]
+		self.assertEqual((item["status"], item["article"]), ("Failed", article["name"]))
+		self.assertIn("empty", item["message"])
+		self.assertIn("Locked", item["message"])
+
+		del self.helpdesk.rejects[("DELETE", ARTICLE)]
+		retry_failed(name)
+		run_migration(name)
+		item = get_import(name)["items"][0]
+		self.assertEqual((item["status"], item["article"]), ("Skipped", None))
+		self.assertFalse(self.helpdesk.articles(title="Debugging"))
 
 	def test_timed_out_page_is_undone_and_made_again_on_retry(self):
 		name = self.connect()["name"]

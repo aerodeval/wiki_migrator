@@ -312,7 +312,11 @@ class WikiMigration(Document):
 			created.article = existing.article
 		page = WikiPage(wiki.get_page_html(d.wiki_route), wiki.base_url, d.wiki_route)
 		if page.is_empty:
-			return "Skipped", _("The page is empty in the wiki"), None, None
+			message = _("The page is empty in the wiki")
+			# a draft a stopped run left goes too; until it can, the page fails and keeps it
+			if created.article and self.undo_page(helpdesk, created):
+				frappe.throw(message)
+			return "Skipped", message, None, None
 		title = d.title[:NAME_LENGTH]
 		if finished:
 			category = existing.category
@@ -378,7 +382,8 @@ class WikiMigration(Document):
 	def link_imported_articles(self, helpdesk: HelpdeskClient, categories: dict[str, dict]):
 		"""Point links between pages of the wiki at their articles, now that they all exist."""
 		imported = self.get_imported_articles(helpdesk, categories)
-		routes = {route: row.article for route, row in imported.items()}
+		# an unfinished article is a category-less draft, never a link target
+		routes = {route: row.article for route, row in imported.items() if row.finished}
 		articles = helpdesk.get_articles(
 			list(routes.values()),
 			["name", "content"],
