@@ -316,8 +316,8 @@ class WikiMigration(Document):
 		if page.is_empty:
 			message = _("The page is empty in the wiki")
 			# a draft a stopped run left goes too; until it can, the page fails and keeps it
-			if created.article and self.undo_page(helpdesk, created):
-				frappe.throw(message)
+			if created.article and (undo_error := self.undo_page(helpdesk, created)):
+				return "Failed", f"{message}\n{undo_error}", created.article, None
 			return "Skipped", message, None, None
 		title = d.title[:NAME_LENGTH]
 		if finished:
