@@ -50,6 +50,11 @@ COUNTED_STATUSES = {
 }
 
 
+def has_app_permission() -> bool:
+	"""Show the app on the apps screen only to the users its API serves."""
+	return "System Manager" in frappe.get_roles()
+
+
 @frappe.whitelist(methods=["POST"])
 def connect(
 	wiki_url: str,

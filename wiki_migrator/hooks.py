@@ -20,15 +20,15 @@ website_route_rules = [
 # required_apps = []
 
 # Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "wiki_migrator",
-# 		"logo": "/assets/wiki_migrator/logo.png",
-# 		"title": "Wiki Migrator",
-# 		"route": "/wiki_migrator",
-# 		"has_permission": "wiki_migrator.api.permission.has_app_permission",
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": "wiki_migrator",
+		"logo": "/assets/wiki_migrator/logo.svg",
+		"title": "Wiki Migrator",
+		"route": "/wiki-migrator",
+		"has_permission": "wiki_migrator.api.has_app_permission",
+	}
+]
 
 # The dock, the rail down the left of the desk, is a document rather than a hook. Author it in
 # Manage Dock on a developer-mode site and press Export to App, and it is written to
