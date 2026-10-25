@@ -1,8 +1,11 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
+from unittest import TestCase
+
 from frappe.tests.utils import FrappeTestCase
 
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.category_icons import match_icon
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_client import (
 	_api_node,
 	_index_nodes,
@@ -300,3 +303,31 @@ class TestWikiPage(FrappeTestCase):
 		self.assertIn(f'href="{BASE_URL}/app/todo"', rewritten)
 		# nothing left to change is not a change
 		self.assertIsNone(rewrite_wiki_links(rewritten, {"handbook/sales": "a1b2c3"}))
+
+
+class TestCategoryIcons(TestCase):
+	def test_names_pick_the_icon_of_their_words(self):
+		self.assertEqual(
+			{
+				name: match_icon(name)
+				for name in (
+					"Billing & Payments",
+					"Integrations",
+					"News",
+					"Appointments",
+					"FAQs",
+					"Getting Started",
+					"Misc",
+				)
+			},
+			{
+				"Billing & Payments": "lucide-credit-card",
+				"Integrations": "lucide-plug",
+				"News": "lucide-megaphone",
+				# a word inside another word is no match
+				"Appointments": "lucide-calendar",
+				"FAQs": "lucide-circle-help",
+				"Getting Started": "lucide-rocket",
+				"Misc": "lucide-folder",
+			},
+		)

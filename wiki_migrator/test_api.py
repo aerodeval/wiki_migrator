@@ -101,12 +101,13 @@ class FakeHelpdesk:
 	Like the real one it refuses to delete a category's last article, and deleting an
 	article deletes its files. `permissions` maps `(doctype, permission)` to False
 	(denied) or None (no such doctype); `rejects` maps `(method, doctype)` to the
-	message the helpdesk refuses that call with.
+	message the helpdesk refuses that call with. An article's author must be in `users`.
 	"""
 
 	def __init__(self, case, supports_subcategories: bool = True):
 		self.supports_subcategories = supports_subcategories
 		self.permissions, self.rejects = {}, {}
+		self.users = {"Administrator"}
 		self.records = {ARTICLE: {}, CATEGORY: {}, "File": {}}
 		self.general = self.insert(CATEGORY, {"category_name": "General"})
 		case.enterContext(patch.object(requests.Session, "request", side_effect=self.respond))
@@ -146,6 +147,8 @@ class FakeHelpdesk:
 		if method == "POST":
 			return {"data": {"name": self.insert(doctype, json)}}
 		if method == "PUT":
+			if "author" in json and json["author"] not in self.users:
+				frappe.throw(f"Could not find User: {json['author']}", frappe.LinkValidationError)
 			self.records[doctype][name].update(json)
 			return {"data": self.records[doctype][name]}
 		if method == "DELETE":
@@ -564,6 +567,41 @@ class TestMigrationJob(MigrationCase):
 			self.helpdesk.records[ARTICLE][release]["content"],
 		)
 		self.assertEqual(get_recent()[0]["counts"]["imported"], 4)
+		self.assertEqual(engineering["icon"], "lucide-code")
+		self.assertEqual(self.helpdesk.category("Playbooks")["icon"], "lucide-folder")
+
+	def test_articles_credit_the_wiki_page_creator_on_the_helpdesk(self):
+		mock_wiki(
+			self,
+			pages=self.wiki_pages,
+			documents={
+				"/api/resource/Wiki Space": {
+					"data": [{"name": "hb", "space_name": "Handbook", "route": "handbook", "root_group": "g"}]
+				},
+				"/api/resource/Wiki Document": {
+					"data": [
+						{"route": "handbook/debugging", "owner": "writer@example.com"},
+						{"route": "handbook/release", "owner": "stranger@example.com"},
+						{"route": "handbook/guide", "owner": "Administrator"},
+					]
+				},
+			},
+		)
+		self.helpdesk.users.add("writer@example.com")
+		name = self.connect(wiki_api_key="wiki-key", wiki_api_secret="wiki-secret")["name"]
+		frappe.db.set_value("Wiki Migration", name, "space", "hb")
+
+		items = self.items(self.migrate(name, self.pages()[:3], self.targets))
+
+		authors = {
+			route: self.helpdesk.records[ARTICLE][d.article].get("author") for route, d in items.items()
+		}
+		# one the helpdesk doesn't know, or a system user, leaves the key's user
+		self.assertEqual(
+			authors,
+			{"handbook/debugging": "writer@example.com", "handbook/release": None, "handbook/guide": None},
+		)
+		self.assertEqual({d.status for d in items.values()}, {"Imported"})
 
 	def test_rerun_skips_or_updates_without_duplicates(self):
 		first = self.items(self.migrate(self.connect()["name"], self.pages(), self.targets))

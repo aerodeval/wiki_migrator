@@ -13,6 +13,7 @@ from frappe.utils import add_to_date, now_datetime, time_diff_in_seconds
 from frappe.utils.background_jobs import is_job_enqueued
 from rq.timeouts import JobTimeoutException
 
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.category_icons import match_icon
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.helpdesk_client import (
 	ARTICLE,
 	CATEGORY,
@@ -242,7 +243,8 @@ class WikiMigration(Document):
 		wiki.resolve_base_url()
 		categories = self.get_categories(helpdesk)
 		targets = self.create_categories(helpdesk, categories)
-		self.import_items(wiki, helpdesk, targets, categories)
+		authors = wiki.get_authors(self.space)
+		self.import_items(wiki, helpdesk, targets, categories, authors)
 		self.link_imported_articles(helpdesk, categories)
 		self.delete_empty_categories(helpdesk, categories)
 		failed = any(d.status == "Failed" for d in self.items)
@@ -267,7 +269,7 @@ class WikiMigration(Document):
 		for name, d in categories.items():
 			if (d["category_name"] or "").lower() == category_name.lower() and d["parent_category"] == parent:
 				return name
-		values = {"category_name": category_name}
+		values = {"category_name": category_name, "icon": match_icon(category_name)}
 		if parent:
 			values["parent_category"] = parent
 		name = helpdesk.insert(CATEGORY, values)
@@ -275,7 +277,12 @@ class WikiMigration(Document):
 		return name
 
 	def import_items(
-		self, wiki: WikiClient, helpdesk: HelpdeskClient, targets: dict[str, str], categories: dict[str, dict]
+		self,
+		wiki: WikiClient,
+		helpdesk: HelpdeskClient,
+		targets: dict[str, str],
+		categories: dict[str, dict],
+		authors: dict[str, str],
 	):
 		imported = self.get_imported_articles(helpdesk, categories)
 		for d in self.items:
@@ -284,7 +291,7 @@ class WikiMigration(Document):
 			# what the page makes on the helpdesk, deleted again if it fails
 			created = frappe._dict(article=None, files=[])
 			try:
-				d.update(self.import_page(wiki, helpdesk, d, targets[d.target], imported, created))
+				d.update(self.import_page(wiki, helpdesk, d, targets[d.target], imported, created, authors))
 				d.finished = int(bool(d.article) and d.status != "Failed")
 			except Exception as e:
 				undo_error = self.undo_page(helpdesk, created)
@@ -336,6 +343,7 @@ class WikiMigration(Document):
 		category: str,
 		imported: dict,
 		created: frappe._dict,
+		authors: dict[str, str],
 	) -> dict:
 		"""Copy one wiki page into an article; the item's new values. `created` holds the
 		article the page makes or takes over, and its files."""
@@ -387,6 +395,8 @@ class WikiMigration(Document):
 		if not finished:
 			values.update(category=category, status=self.article_status, visibility=self.visibility)
 		helpdesk.update(ARTICLE, article, values)
+		if not finished:
+			helpdesk.set_author(article, authors.get(d.wiki_route))
 		return {
 			"status": "Updated" if finished else "Imported",
 			"message": "\n".join(warnings) or None,

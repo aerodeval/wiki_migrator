@@ -114,6 +114,17 @@ class HelpdeskClient:
 	def delete(self, doctype: str, name: str) -> None:
 		self.request("DELETE", _resource(doctype, name))
 
+	def set_author(self, article: str, user: str | None) -> None:
+		"""Credit `user` with `article` when the helpdesk has them; the helpdesk sets the
+		key's user on insert, so otherwise the article stays theirs."""
+		if not user:
+			return
+		# the save checks the user exists, which an agent can't look up in User itself
+		try:
+			self.update(ARTICLE, article, {"author": user})
+		except frappe.ValidationError:
+			frappe.clear_messages()
+
 	def upload_file(self, article: str, file_name: str, content: bytes) -> dict:
 		"""A public file attached to `article`: its `name` and `file_url`."""
 		return self.request(

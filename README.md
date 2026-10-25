@@ -27,6 +27,8 @@ A re-run of the same wiki and helpdesk updates or skips the pages it imported be
 
 To bring the articles up to date after the wiki changes, open the run and click **Sync now**, or turn on **Keep in sync** to sync every hour. A sync updates only the articles whose wiki page changed, so edits on the helpdesk stay until the page changes. It does not import pages added to the wiki later. Start a new migration for those.
 
+A new category gets the icon that best fits its name, or a folder when no icon fits. With a wiki API key, a new article is credited to the user who created the wiki page, when the helpdesk has a user with that email. Otherwise the author is the helpdesk API key's user.
+
 Limits:
 
 - It needs Frappe Wiki v3 and imports only published pages.
