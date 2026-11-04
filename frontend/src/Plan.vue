@@ -14,7 +14,13 @@
 							{{ migration.data.wiki_url }} → {{ migration.data.helpdesk_url }}
 						</p>
 					</div>
-					<Button :label="__('Change')" :route="{ name: 'Connect' }" />
+					<div class="flex shrink-0 gap-2">
+						<Button
+							:label="__('Import from a list')"
+							:route="{ name: 'ListImport', params: { name } }"
+						/>
+						<Button :label="__('Change')" :route="{ name: 'Connect' }" />
+					</div>
 				</div>
 
 				<p v-if="!space" class="text-p-base text-ink-gray-6">

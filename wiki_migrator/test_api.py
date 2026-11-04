@@ -107,6 +107,7 @@ class FakeHelpdesk:
 	def __init__(self, case, supports_subcategories: bool = True):
 		self.supports_subcategories = supports_subcategories
 		self.permissions, self.rejects = {}, {}
+		self.overloaded_saves = 0
 		self.users = {"Administrator"}
 		self.records = {ARTICLE: {}, CATEGORY: {}, "File": {}}
 		self.general = self.insert(CATEGORY, {"category_name": "General"})
@@ -120,6 +121,9 @@ class FakeHelpdesk:
 			return make_response(200, {"message": "pong"}, url)
 		if (headers or {}).get("Authorization") != HELPDESK_AUTH:
 			return make_response(401, {"exc_type": "AuthenticationError"}, url)
+		if method != "GET" and self.overloaded_saves:
+			self.overloaded_saves -= 1
+			return make_response(503, {"exc_type": "QueueOverloaded"}, url)
 		doctype, _, name = path.removeprefix("/api/resource/").partition("/")
 		if message := self.rejects.get((method, doctype)):
 			return self.error(message, url)
@@ -138,12 +142,14 @@ class FakeHelpdesk:
 			allowed = self.permissions.get((params["doctype"], params["perm_type"]), True)
 			return None if allowed is None else {"message": {"has_permission": allowed}}
 		if path == "/api/method/frappe.desk.form.load.getdoctype":
-			fields = ["category_name"] + (["parent_category"] if self.supports_subcategories else [])
+			fields = ["category_name"] + (["parent_article_category"] if self.supports_subcategories else [])
 			return {"docs": [{"fields": [{"fieldname": d} for d in fields]}]}
 		if path == "/api/method/frappe.client.get_list":
 			return {"message": self.get_list(params)}
 		if path == "/api/method/upload_file":
 			return {"message": self.upload_file(data, *files["file"])}
+		if path.endswith(".move_to_category"):
+			return self.move_to_category(json)
 		if method == "POST":
 			return {"data": {"name": self.insert(doctype, json)}}
 		if method == "PUT":
@@ -173,8 +179,18 @@ class FakeHelpdesk:
 
 	def insert(self, doctype: str, values: dict) -> str:
 		name = frappe.generate_hash(length=10)
-		self.records[doctype][name] = {"name": name, "parent_category": None, **values}
+		self.records[doctype][name] = {"name": name, "parent_article_category": None, **values}
 		return name
+
+	def move_to_category(self, values: dict) -> dict:
+		for article in values["articles"]:
+			self.leave_category(self.records[ARTICLE][article].get("category"), article)
+			self.records[ARTICLE][article]["category"] = values["category"]
+		return {"message": None}
+
+	def leave_category(self, category: str | None, article: str) -> None:
+		if category and [d["name"] for d in self.articles(category=category)] == [article]:
+			frappe.throw("This is the only article in the category")
 
 	def upload_file(self, data: dict, file_name: str, content: bytes) -> dict:
 		name = self.insert(
@@ -195,7 +211,20 @@ class FakeHelpdesk:
 				frappe.throw("Category must have at least one article")
 			for file in self.files(name):
 				del self.records["File"][file["name"]]
+		if doctype == CATEGORY:
+			self.delete_category(name)
 		del self.records[doctype][name]
+
+	def delete_category(self, name: str) -> None:
+		"""Like the real one: a subcategory can't empty its parent, and orphans move up."""
+		categories = self.records[CATEGORY]
+		parent = categories[name]["parent_article_category"]
+		siblings = [d for d in categories.values() if d["parent_article_category"] == parent]
+		if parent and len(siblings) == 1 and not self.articles(category=parent):
+			frappe.throw("Delete the parent category instead")
+		for d in categories.values():
+			if d["parent_article_category"] == name:
+				d["parent_article_category"] = None
 
 	def error(self, message: str, url: str) -> requests.Response:
 		messages = json.dumps([json.dumps({"message": message})])
@@ -388,7 +417,7 @@ class TestPlanValidation(MigrationCase):
 
 	def test_categories_go_one_level_deep(self):
 		parent = self.helpdesk.insert(CATEGORY, {"category_name": "Parent"})
-		child = self.helpdesk.insert(CATEGORY, {"category_name": "Child", "parent_category": parent})
+		child = self.helpdesk.insert(CATEGORY, {"category_name": "Child", "parent_article_category": parent})
 
 		self.assert_rejected(
 			"can't have subcategories",
@@ -535,8 +564,8 @@ class TestMigrationJob(MigrationCase):
 
 		engineering = self.helpdesk.category("Engineering")
 		backend = self.helpdesk.category("Backend")
-		self.assertEqual(backend["parent_category"], engineering["name"])
-		self.assertEqual(self.helpdesk.category("Playbooks")["parent_category"], self.existing)
+		self.assertEqual(backend["parent_article_category"], engineering["name"])
+		self.assertEqual(self.helpdesk.category("Playbooks")["parent_article_category"], self.existing)
 		self.assertEqual(items["handbook/guide"].category, self.existing)
 		self.assertEqual(items["handbook/faq"].category, self.helpdesk.general)
 		self.assertEqual(

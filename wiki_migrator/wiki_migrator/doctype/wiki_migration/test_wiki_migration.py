@@ -91,6 +91,21 @@ class TestWikiIndex(FrappeTestCase):
 		self.assertEqual((first["key"], second["key"]), ("group:Guides", "group:Guides#2"))
 		self.assertEqual(second["children"][0]["key"], "group:Guides#2/Setup")
 
+	def test_index_reads_descriptions_and_bracketed_urls(self):
+		# docs.frappe.io/erpnext/llms.txt writes its links both ways
+		index = (
+			"- **Selling**\n"
+			"  - [Asset](https://w.io/erpnext/asset.md): Create an Asset (with value)\n"
+			"  - [Coupon Code](<https://w.io/erpnext/coupon-code>)\n"
+		)
+
+		selling = _index_nodes(parse_index(index))[0]
+
+		self.assertEqual(
+			[(d["title"], d["route"]) for d in selling["children"]],
+			[("Asset", "erpnext/asset"), ("Coupon Code", "erpnext/coupon-code")],
+		)
+
 	def test_a_page_listed_twice_is_kept_where_it_first_appears(self):
 		index = (
 			"- **One**\n  - [Intro](https://w.io/intro.md)\n"

@@ -121,6 +121,17 @@ def start_import(name: str, plan: dict | str) -> dict:
 
 
 @frappe.whitelist(methods=["POST"])
+def preview_list(name: str, text: str) -> dict:
+	return _get_migration(name).preview_list(text)
+
+
+@frappe.whitelist(methods=["POST"])
+def start_list_import(name: str, text: str, options: dict | str) -> dict:
+	_get_migration(name).start_list(text, frappe.parse_json(options))
+	return get_import(name)
+
+
+@frappe.whitelist(methods=["POST"])
 def retry_failed(name: str) -> dict:
 	_get_migration(name).retry()
 	return get_import(name)
