@@ -1,8 +1,11 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
+from unittest import TestCase
+
 from frappe.tests.utils import FrappeTestCase
 
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.category_icons import match_icon
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.wiki_client import (
 	_api_node,
 	_index_nodes,
@@ -87,6 +90,21 @@ class TestWikiIndex(FrappeTestCase):
 
 		self.assertEqual((first["key"], second["key"]), ("group:Guides", "group:Guides#2"))
 		self.assertEqual(second["children"][0]["key"], "group:Guides#2/Setup")
+
+	def test_index_reads_descriptions_and_bracketed_urls(self):
+		# docs.frappe.io/erpnext/llms.txt writes its links both ways
+		index = (
+			"- **Selling**\n"
+			"  - [Asset](https://w.io/erpnext/asset.md): Create an Asset (with value)\n"
+			"  - [Coupon Code](<https://w.io/erpnext/coupon-code>)\n"
+		)
+
+		selling = _index_nodes(parse_index(index))[0]
+
+		self.assertEqual(
+			[(d["title"], d["route"]) for d in selling["children"]],
+			[("Asset", "erpnext/asset"), ("Coupon Code", "erpnext/coupon-code")],
+		)
 
 	def test_a_page_listed_twice_is_kept_where_it_first_appears(self):
 		index = (
@@ -300,3 +318,31 @@ class TestWikiPage(FrappeTestCase):
 		self.assertIn(f'href="{BASE_URL}/app/todo"', rewritten)
 		# nothing left to change is not a change
 		self.assertIsNone(rewrite_wiki_links(rewritten, {"handbook/sales": "a1b2c3"}))
+
+
+class TestCategoryIcons(TestCase):
+	def test_names_pick_the_icon_of_their_words(self):
+		self.assertEqual(
+			{
+				name: match_icon(name)
+				for name in (
+					"Billing & Payments",
+					"Integrations",
+					"News",
+					"Appointments",
+					"FAQs",
+					"Getting Started",
+					"Misc",
+				)
+			},
+			{
+				"Billing & Payments": "lucide-credit-card",
+				"Integrations": "lucide-plug",
+				"News": "lucide-megaphone",
+				# a word inside another word is no match
+				"Appointments": "lucide-calendar",
+				"FAQs": "lucide-circle-help",
+				"Getting Started": "lucide-rocket",
+				"Misc": "lucide-folder",
+			},
+		)

@@ -5,6 +5,7 @@ trees; with an API key and secret the REST API does, and private spaces show too
 Page HTML comes from the same guest-allowed endpoint in both modes.
 """
 
+import json
 import re
 from urllib.parse import unquote, urljoin, urlsplit
 
@@ -20,10 +21,14 @@ TREE_METHOD = "wiki.api.wiki_space.get_wiki_tree"
 # a route no wiki has: the wiki answers "Page not found", any other site something else
 PROBE_ROUTE = "wiki-migrator-probe"
 DOWNLOAD_CHUNK = 64 * 1024
+# no one on the helpdesk wrote a page these made
+SYSTEM_USERS = ("Administrator", "Guest")
 MAX_REDIRECTS = 5
-# `  - [Label](url)` or `- **Label**`: indent, then a link or a bold group label
+# routes per `in` filter, so a request stays within URL limits
+AUTHOR_BATCH_SIZE = 50
+# `  - [Label](url): description`, `[Label](<url>)` or `- **Label**`: indent, then a link or a bold label
 INDEX_LINE = re.compile(
-	r"^(?P<indent>\s*)- (?:\[(?P<label>.*)\]\((?P<url>[^)]*)\)|\*\*(?P<group>.*)\*\*)\s*$"
+	r"^(?P<indent>\s*)- (?:\[(?P<label>.*?)\]\(<?(?P<url>[^)>]*)>?\)(?::.*)?|\*\*(?P<group>.*)\*\*)\s*$"
 )
 
 
@@ -90,6 +95,29 @@ class WikiClient:
 		else:
 			nodes = _index_nodes(parse_index(self.get(f"/{space['route']}/llms.txt").text))
 		return drop_duplicate_routes(nodes)
+
+	def get_authors(self, routes: list[str]) -> dict[str, str]:
+		"""Who created each page, by route. Only the REST API has it, and a key whose user
+		can't read Wiki Document gets none: the articles keep the helpdesk's user."""
+		if not self.auth:
+			return {}
+		authors = {}
+		for start in range(0, len(routes), AUTHOR_BATCH_SIZE):
+			response = self.get(
+				"/api/resource/Wiki Document",
+				check=False,
+				params={
+					"fields": '["route","owner"]',
+					"filters": json.dumps(
+						[["route", "in", routes[start : start + AUTHOR_BATCH_SIZE]], ["is_group", "=", 0]]
+					),
+					"limit_page_length": 0,
+				},
+			)
+			if not response.ok:
+				return {}
+			authors.update({d["route"]: d["owner"] for d in response.json()["data"]})
+		return {route: owner for route, owner in authors.items() if owner not in SYSTEM_USERS}
 
 	def get_page(self, route: str) -> dict:
 		"""A published page's `title` and `rendered_content`."""

@@ -83,7 +83,7 @@
 			<ul class="flex flex-col">
 				<li
 					v-for="item in items"
-					:key="item.wiki_route"
+					:key="item.wiki_route || item.article"
 					class="flex items-start gap-3 border-b border-outline-gray-1 py-2.5"
 				>
 					<span
@@ -146,7 +146,7 @@ import { __, categoryLabel, getErrorMessage, importStatusTheme } from "./utils";
 type ItemStatus = "Pending" | "Imported" | "Updated" | "Unchanged" | "Skipped" | "Failed";
 
 interface WikiImportItem {
-	wiki_route: string;
+	wiki_route: string | null;
 	title: string;
 	status: ItemStatus;
 	message: string | null;

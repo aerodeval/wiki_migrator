@@ -23,9 +23,23 @@ Install it on its own site. It does not need Helpdesk or Wiki on the same bench:
 4. Choose a space. In the planner, select the pages and choose a category for each wiki group: a new category, an existing category, or, when the helpdesk supports subcategories, a subcategory.
 5. Start the import. It runs as a background job, so the site needs a running worker. Pages that fail can be retried from the run page.
 
+To place articles by hand, choose **Import from a list** and paste or open a Markdown list. A `## heading` is a category, a bullet is a subcategory, and a link under it is an article:
+
+```markdown
+## Frappe Cloud
+
+- Plans and billing
+  - [Billing Cycle](https://docs.example.com/cloud/billing/billing-cycle)
+  - [Plans](https://support.example.com/help/articles/662a8e335c)
+```
+
+The list can name pages from any space. Each article keeps the label and the order of the list. The order is saved as the article's weight, which needs a helpdesk with article weights. A link to an article on the destination helpdesk moves that article and does not copy it. The preview shows each line it can't use, and why. A page that doesn't exist in the wiki fails during the import, and you can see it on the run page.
+
 A re-run of the same wiki and helpdesk updates or skips the pages it imported before. It does not create duplicates.
 
 To bring the articles up to date after the wiki changes, open the run and click **Sync now**, or turn on **Keep in sync** to sync every hour. A sync updates only the articles whose wiki page changed, so edits on the helpdesk stay until the page changes. It does not import pages added to the wiki later. Start a new migration for those.
+
+A new category gets the icon that best fits its name, or a folder when no icon fits. With a wiki API key, a new article is credited to the user who created the wiki page, when the helpdesk has a user with that email. Otherwise the author is the helpdesk API key's user.
 
 Limits:
 

@@ -211,6 +211,7 @@ import {
 } from "frappe-ui";
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
+import { onExistingOptions, statusOptions, visibilityOptions } from "./importOptions";
 import {
 	type ArticleCategory,
 	type WikiGroup,
@@ -273,20 +274,6 @@ const importAsOptions = [
 const nestedImportAsOptions = [
 	...importAsOptions,
 	{ value: "merge", label: __("Merge into parent") },
-];
-const statusOptions = [
-	{ value: "Published", label: __("Published") },
-	{ value: "Draft", label: __("Draft") },
-];
-// Same wording as helpdesk's article access modal.
-const visibilityOptions = [
-	{ value: "Public", label: __("Public"), icon: "lucide-globe" },
-	{ value: "Customers", label: __("Customers"), icon: "lucide-building-2" },
-	{ value: "Private", label: __("Private"), icon: "lucide-lock" },
-];
-const onExistingOptions = [
-	{ value: "Update", label: __("Update") },
-	{ value: "Skip", label: __("Skip") },
 ];
 
 const rowKey = (row: WikiRow) =>

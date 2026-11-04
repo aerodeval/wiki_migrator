@@ -13,6 +13,8 @@ from frappe.utils import add_to_date, now_datetime, time_diff_in_seconds
 from frappe.utils.background_jobs import is_job_enqueued
 from rq.timeouts import JobTimeoutException
 
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.category_icons import match_icon
+from wiki_migrator.wiki_migrator.doctype.wiki_migration.category_list import CategoryList
 from wiki_migrator.wiki_migrator.doctype.wiki_migration.helpdesk_client import (
 	ARTICLE,
 	CATEGORY,
@@ -95,16 +97,44 @@ class WikiMigration(Document):
 			"items",
 			[
 				{
-					"wiki_route": d["route"],
-					"title": d.get("title") or d["route"],
+					"wiki_route": d.get("route"),
+					"title": d.get("title") or d.get("route"),
 					"target": d["target"],
 					"status": "Pending",
+					"weight": d.get("weight") or 0,
+					# a helpdesk article a list names: it exists, so there's nothing to copy
+					"article": d.get("article"),
+					"finished": int(bool(d.get("article"))),
 				}
 				for d in plan["pages"]
 			],
 		)
 		self.save()
 		self.enqueue()
+
+	def preview_list(self, text: str) -> dict:
+		"""What `start_list` would import from `text`, nothing on the helpdesk changed."""
+		helpdesk = self.get_helpdesk_client()
+		category_list = self.read_list(helpdesk, text)
+		imported = self.get_imported_articles(helpdesk, self.get_categories(helpdesk))
+		routes = [d["route"] for d in category_list.get_plan()["pages"] if d.get("route")]
+		return {
+			**category_list.as_dict(),
+			"supports_subcategories": bool(self.supports_subcategories),
+			"already_imported": sum(1 for route in routes if route in imported),
+		}
+
+	def start_list(self, text: str, options: dict):
+		"""Import what a category list names, each article where the list puts it."""
+		plan = self.read_list(self.get_helpdesk_client(), text).get_plan()
+		self.update({"from_list": 1, "space_title": _("Category list")})
+		self.start({**options, **plan})
+
+	def read_list(self, helpdesk: HelpdeskClient, text: str) -> CategoryList:
+		category_list = CategoryList(text, self.wiki_url, self.helpdesk_url)
+		found = helpdesk.get_articles(category_list.article_names, ["name"])
+		category_list.remove_missing_articles({d["name"] for d in found})
+		return category_list
 
 	def retry(self):
 		refusal = None if self.can_retry else _("There are no failed pages to retry.")
@@ -174,9 +204,9 @@ class WikiMigration(Document):
 		targets = plan.get("targets") or {}
 		if not pages:
 			frappe.throw(_("Pick at least one page to import."))
-		routes = [d.get("route") for d in pages]
-		if not all(routes):
+		if not all(d.get("route") or d.get("article") for d in pages):
 			frappe.throw(_("Every page needs its wiki route."))
+		routes = [d["route"] for d in pages if d.get("route")]
 		if len(set(routes)) != len(routes):
 			frappe.throw(_("A page can be imported only once."))
 		for d in pages:
@@ -242,7 +272,8 @@ class WikiMigration(Document):
 		wiki.resolve_base_url()
 		categories = self.get_categories(helpdesk)
 		targets = self.create_categories(helpdesk, categories)
-		self.import_items(wiki, helpdesk, targets, categories)
+		authors = wiki.get_authors([d.wiki_route for d in self.items if d.wiki_route])
+		self.import_items(wiki, helpdesk, targets, categories, authors)
 		self.link_imported_articles(helpdesk, categories)
 		self.delete_empty_categories(helpdesk, categories)
 		failed = any(d.status == "Failed" for d in self.items)
@@ -267,15 +298,22 @@ class WikiMigration(Document):
 		for name, d in categories.items():
 			if (d["category_name"] or "").lower() == category_name.lower() and d["parent_category"] == parent:
 				return name
-		values = {"category_name": category_name}
-		if parent:
-			values["parent_category"] = parent
-		name = helpdesk.insert(CATEGORY, values)
-		categories[name] = {"name": name, "parent_category": parent, "created": True, **values}
+		name = helpdesk.insert_category(category_name, match_icon(category_name), parent)
+		categories[name] = {
+			"name": name,
+			"category_name": category_name,
+			"parent_category": parent,
+			"created": True,
+		}
 		return name
 
 	def import_items(
-		self, wiki: WikiClient, helpdesk: HelpdeskClient, targets: dict[str, str], categories: dict[str, dict]
+		self,
+		wiki: WikiClient,
+		helpdesk: HelpdeskClient,
+		targets: dict[str, str],
+		categories: dict[str, dict],
+		authors: dict[str, str],
 	):
 		imported = self.get_imported_articles(helpdesk, categories)
 		for d in self.items:
@@ -284,7 +322,7 @@ class WikiMigration(Document):
 			# what the page makes on the helpdesk, deleted again if it fails
 			created = frappe._dict(article=None, files=[])
 			try:
-				d.update(self.import_page(wiki, helpdesk, d, targets[d.target], imported, created))
+				d.update(self.import_item(wiki, helpdesk, d, targets[d.target], imported, created, authors))
 				d.finished = int(bool(d.article) and d.status != "Failed")
 			except Exception as e:
 				undo_error = self.undo_page(helpdesk, created)
@@ -304,7 +342,9 @@ class WikiMigration(Document):
 					frappe.db.commit()
 					raise
 				d.status = "Failed"
-				d.message = "\n".join(filter(None, [get_error_message(e, d.wiki_route), undo_error]))
+				d.message = "\n".join(
+					filter(None, [get_error_message(e, d.wiki_route or d.title), undo_error])
+				)
 			d.category_name, d.parent_category_name = get_category_names(categories, d.category)
 			frappe.clear_messages()
 			values = {
@@ -319,6 +359,7 @@ class WikiMigration(Document):
 					"parent_category_name",
 					"finished",
 					"content_hash",
+					"placed",
 				)
 			}
 			# a route's newest synced_on is the run that last wrote or checked its article,
@@ -328,6 +369,29 @@ class WikiMigration(Document):
 			frappe.db.set_value("Wiki Migration Item", d.name, values)
 			frappe.db.commit()
 
+	def import_item(
+		self,
+		wiki: WikiClient,
+		helpdesk: HelpdeskClient,
+		d,
+		category: str,
+		imported: dict,
+		created: frappe._dict,
+		authors: dict[str, str],
+	) -> dict:
+		"""The item's new values; a list places an article once, so a sync keeps agents' changes."""
+		if d.wiki_route:
+			values = self.import_page(wiki, helpdesk, d, category, imported, created, authors)
+		else:
+			values = {"status": "Unchanged", "message": None, "category": d.category}
+		article = values.get("article", d.article)
+		if self.from_list and article and not d.placed and values["status"] != "Failed":
+			if not values.get("placed"):
+				helpdesk.move_article(article, category, d.weight)
+				values.update(status="Updated", category=category, message=None)
+			values["placed"] = 1
+		return values
+
 	def import_page(
 		self,
 		wiki: WikiClient,
@@ -336,6 +400,7 @@ class WikiMigration(Document):
 		category: str,
 		imported: dict,
 		created: frappe._dict,
+		authors: dict[str, str],
 	) -> dict:
 		"""Copy one wiki page into an article; the item's new values. `created` holds the
 		article the page makes or takes over, and its files."""
@@ -351,7 +416,8 @@ class WikiMigration(Document):
 			# a stopped run made it but never finished it: this page takes it over
 			created.article = existing.article
 		data = wiki.get_page(d.wiki_route)
-		title = (data.get("title") or d.title)[:NAME_LENGTH]
+		# a list's labels were written for readers, a wiki page's title for its space
+		title = (d.title if self.from_list else data.get("title") or d.title)[:NAME_LENGTH]
 		html = data.get("rendered_content") or ""
 		content_hash = get_content_hash(f"{title}\n{html}")
 		if finished and content_hash == existing.content_hash:
@@ -385,8 +451,15 @@ class WikiMigration(Document):
 		warnings = self.copy_assets(wiki, helpdesk, page, article, bool(existing), created.files)
 		values = {"title": title, "content": page.html}
 		if not finished:
-			values.update(category=category, status=self.article_status, visibility=self.visibility)
+			values.update(
+				category=category,
+				status=self.article_status,
+				visibility=self.visibility,
+				weight=d.weight,
+			)
 		helpdesk.update(ARTICLE, article, values)
+		if not finished:
+			helpdesk.set_author(article, authors.get(d.wiki_route))
 		return {
 			"status": "Updated" if finished else "Imported",
 			"message": "\n".join(warnings) or None,
@@ -394,6 +467,7 @@ class WikiMigration(Document):
 			"category": category,
 			"title": title,
 			"content_hash": content_hash,
+			"placed": d.placed if finished else 1,
 		}
 
 	def copy_assets(
@@ -451,13 +525,14 @@ class WikiMigration(Document):
 				helpdesk.update(ARTICLE, article["name"], {"content": content})
 
 	def delete_empty_categories(self, helpdesk: HelpdeskClient, categories: dict[str, dict]):
-		# subcategories were made after their parents, so they go first
-		for category in reversed([name for name, d in categories.items() if d.get("created")]):
-			has_subcategories = any(d["parent_category"] == category for d in categories.values())
-			if has_subcategories or helpdesk.has_articles(category):
-				continue
-			helpdesk.delete(CATEGORY, category)
-			del categories[category]
+		empty = {
+			name for name, d in categories.items() if d.get("created") and not helpdesk.has_articles(name)
+		}
+		# parents first: the helpdesk refuses to delete the last subcategory of an empty parent
+		for category in sorted(empty, key=lambda name: bool(categories[name]["parent_category"])):
+			subcategories = {name for name, d in categories.items() if d["parent_category"] == category}
+			if subcategories <= empty:
+				helpdesk.delete(CATEGORY, category)
 
 	def get_imported_articles(
 		self, helpdesk: HelpdeskClient, categories: dict[str, dict]
@@ -475,6 +550,7 @@ class WikiMigration(Document):
 			.where(migration.wiki_url == self.wiki_url)
 			.where(migration.helpdesk_url == self.helpdesk_url)
 			.where(item.article.isnotnull() & (item.article != ""))
+			.where(item.wiki_route.isnotnull() & (item.wiki_route != ""))
 			.where(item.synced_on.isnotnull())
 			.orderby(item.synced_on, order=Order.desc)
 			.run(as_dict=True)

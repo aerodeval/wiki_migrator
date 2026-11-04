@@ -138,6 +138,11 @@
 						:disabled="!space"
 						@click="openPlan(connection.name, space!)"
 					/>
+					<Button
+						variant="ghost"
+						:label="__('Import from a list')"
+						:route="{ name: 'ListImport', params: { name: connection.name } }"
+					/>
 				</div>
 			</div>
 

@@ -5,6 +5,7 @@ the connect probe that finds the site's canonical address before any key is sent
 """
 
 import json
+import time
 from urllib.parse import quote
 
 import frappe
@@ -16,6 +17,11 @@ from wiki_migrator.wiki_migrator.doctype.wiki_migration.http import get_origin, 
 
 ARTICLE = "HD Article"
 CATEGORY = "HD Article Category"
+PARENT_FIELD = "parent_article_category"
+MOVE_ARTICLES_METHOD = "helpdesk.api.knowledge_base.move_to_category"
+# a save queues jobs, so a helpdesk with a full queue refuses it until the queue drains
+OVERLOAD_WAIT_SECONDS = 30
+OVERLOAD_ATTEMPTS = 40
 # names per `in` filter, so a large wiki's lookups stay within URL limits
 BATCH_SIZE = 100
 
@@ -66,12 +72,24 @@ class HelpdeskClient:
 		meta = self.get("/api/method/frappe.desk.form.load.getdoctype", params={"doctype": CATEGORY})["docs"][
 			0
 		]
-		return any(d["fieldname"] == "parent_category" for d in meta["fields"])
+		return any(d["fieldname"] == PARENT_FIELD for d in meta["fields"])
 
 	def get_categories(self, with_parent: bool = True) -> list[dict]:
-		fields = ["name", "category_name"] + (["parent_category"] if with_parent else [])
+		fields = ["name", "category_name"] + ([PARENT_FIELD] if with_parent else [])
 		rows = self.get_list(CATEGORY, fields)
-		return [{"parent_category": None, **d} for d in rows]
+		return [{**d, "parent_category": d.get(PARENT_FIELD)} for d in rows]
+
+	def insert_category(self, category_name: str, icon: str, parent: str | None) -> str:
+		values = {"category_name": category_name, "icon": icon}
+		if parent:
+			values[PARENT_FIELD] = parent
+		return self.insert(CATEGORY, values)
+
+	def move_article(self, article: str, category: str, weight: int) -> None:
+		"""Move through the helpdesk's own endpoint, which applies its visibility rules."""
+		path = f"/api/method/{MOVE_ARTICLES_METHOD}"
+		self.request("POST", path, json={"category": category, "articles": [article]})
+		self.update(ARTICLE, article, {"weight": weight})
 
 	def get_articles(self, names: list[str], fields: list[str], *filters) -> list[dict]:
 		names = sorted(set(names))
@@ -114,6 +132,17 @@ class HelpdeskClient:
 	def delete(self, doctype: str, name: str) -> None:
 		self.request("DELETE", _resource(doctype, name))
 
+	def set_author(self, article: str, user: str | None) -> None:
+		"""Credit `user` with `article` when the helpdesk has them; the helpdesk sets the
+		key's user on insert, so otherwise the article stays theirs."""
+		if not user:
+			return
+		# the save checks the user exists, which an agent can't look up in User itself
+		try:
+			self.update(ARTICLE, article, {"author": user})
+		except frappe.ValidationError:
+			frappe.clear_messages()
+
 	def upload_file(self, article: str, file_name: str, content: bytes) -> dict:
 		"""A public file attached to `article`: its `name` and `file_url`."""
 		return self.request(
@@ -127,7 +156,12 @@ class HelpdeskClient:
 		return self.request("GET", path, **kwargs).json()
 
 	def request(self, method: str, path: str, check: bool = True, **kwargs) -> requests.Response:
-		response = send(self.session, method, self.base_url + path, self.base_url, self.auth, **kwargs)
+		for attempt in range(OVERLOAD_ATTEMPTS):
+			if attempt:
+				time.sleep(OVERLOAD_WAIT_SECONDS)
+			response = send(self.session, method, self.base_url + path, self.base_url, self.auth, **kwargs)
+			if not _is_overloaded(response):
+				break
 		if check:
 			self.check(response)
 		return response
@@ -152,6 +186,10 @@ def get_server_message(response: requests.Response) -> str | None:
 		return strip_html(message) if message else None
 	if exception := data.get("exception"):
 		return exception.split(": ", 1)[-1]
+
+
+def _is_overloaded(response: requests.Response) -> bool:
+	return response.status_code == 503 and _get_json(response).get("exc_type") == "QueueOverloaded"
 
 
 def _get_json(response: requests.Response) -> dict:
